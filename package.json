@@ -1,0 +1,23 @@
+{
+  "name": "discovery-camp-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram check-in bot for Discovery Camp (Vercel + Google Sheets)",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "qr": "tsx scripts/qr.ts",
+    "set-webhook": "tsx scripts/set-webhook.ts"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "grammy": "^1.30.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/qrcode": "^1.5.5",
+    "@vercel/node": "^3.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
