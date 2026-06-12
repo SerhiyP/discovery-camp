@@ -86,4 +86,8 @@ export const M = {
   noAdmins: "Адмінів ще немає.",
   adminsListTitle: "Список адмінів:",
   adminListLine: (name: string, id: string) => `• ${name} (${id})`,
+
+  // Leader keyboard hints
+  notifyTeamHint: "Напишіть команду з текстом:\n/notifyteam <ваше повідомлення>",
+  renameTeamHint: "Напишіть команду з новою назвою:\n/renameteam <нова назва>",
 };
