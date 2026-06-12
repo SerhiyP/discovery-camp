@@ -47,8 +47,8 @@ export async function setCommandsForUser(bot: Bot, userId: number, role: UserRol
 
 /** Called at bot startup to set menus for all known privileged users. */
 export async function initCommandMenus(bot: Bot, admins: Admin[], leaders: Leader[]): Promise<void> {
-  // Default menu for everyone
-  await bot.api.setMyCommands(USER_COMMANDS);
+  // No default menu — visitors use the reply keyboard instead
+  await bot.api.setMyCommands([]);
 
   // Leader menus first (may be overridden by admin/superadmin below)
   const linkedLeaderIds = [
