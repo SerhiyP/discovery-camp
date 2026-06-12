@@ -1,3 +1,4 @@
+import "dotenv/config";
 // Registers the Vercel deployment as the bot's webhook.
 // Usage: npm run set-webhook (needs BOT_TOKEN, PUBLIC_URL, WEBHOOK_SECRET)
 const token = process.env.BOT_TOKEN;

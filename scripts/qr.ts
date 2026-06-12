@@ -1,6 +1,7 @@
 // Generates the poster QR code: scanning opens the bot with /start checkin.
 // Usage: BOT_USERNAME=DiscoveryCampBot npm run qr
 import QRCode from "qrcode";
+import "dotenv/config";
 
 const username = process.env.BOT_USERNAME;
 if (!username) {
