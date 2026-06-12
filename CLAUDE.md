@@ -24,8 +24,7 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 
 ### Entry points
 
-- `api/bot.ts` — Telegram webhook handler (POST from Telegram). Wraps `src/bot.ts` via `webhookCallback`.
-- `api/cron/digest.ts` — Morning digest cron job, fires at `0 5 * * *` UTC (08:00 Kyiv). Protected by `CRON_SECRET`.
+- `api/bot.ts` — Telegram webhook handler (POST from Telegram). Wraps `src/bot.ts` via `webhookCallback`. This is the only serverless function (the morning-digest cron was removed).
 
 ### Source modules (`src/`)
 
