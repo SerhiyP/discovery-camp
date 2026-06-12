@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot, Context, InlineKeyboard } from "grammy";
 import { config } from "./config";
 import {
   findByTelegramId,
@@ -31,6 +31,7 @@ import {
   setLeaderTelegramId,
 } from "./leaders";
 import { initCommandMenus, setCommandsForUser } from "./commands";
+import { BTN, leaderKeyboard, visitorKeyboard } from "./keyboards";
 
 export const bot = new Bot(config.botToken);
 
@@ -122,11 +123,10 @@ function eventLine(e: { time: string; title: string }): string {
   return `${e.time} — ${e.title}`;
 }
 
-bot.command("events", async (ctx) => {
+async function handleEvents(ctx: Context) {
   const [events, regs] = await Promise.all([loadEvents(), loadRegistrations()]);
   const today = todayEvents(events);
   if (today.length === 0) return ctx.reply(M.noEventsToday);
-
   const kb = new InlineKeyboard();
   const lines: string[] = [M.eventsToday, ""];
   for (const e of today) {
@@ -140,9 +140,9 @@ bot.command("events", async (ctx) => {
     ).row();
   }
   return ctx.reply(lines.join("\n"), { reply_markup: kb });
-});
+}
 
-bot.command("schedule", async (ctx) => {
+async function handleSchedule(ctx: Context) {
   const events = upcomingEvents(await loadEvents());
   if (events.length === 0) return ctx.reply(M.noEventsToday);
   const byDate = new Map<string, string[]>();
@@ -153,9 +153,9 @@ bot.command("schedule", async (ctx) => {
   const lines = [M.scheduleTitle, ""];
   for (const [date, items] of byDate) lines.push(date, ...items, "");
   return ctx.reply(lines.join("\n"));
-});
+}
 
-bot.command("myevents", async (ctx) => {
+async function handleMyEvents(ctx: Context) {
   const [events, regs] = await Promise.all([loadEvents(), loadRegistrations()]);
   const mine = regs.filter(
     (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled,
@@ -167,7 +167,11 @@ bot.command("myevents", async (ctx) => {
     if (e) lines.push(`• ${e.date} ${eventLine(e)}`);
   }
   return ctx.reply(lines.join("\n"));
-});
+}
+
+bot.command("events", handleEvents);
+bot.command("schedule", handleSchedule);
+bot.command("myevents", handleMyEvents);
 
 bot.callbackQuery(/^reg:(.+)$/, async (ctx) => {
   const eventId = ctx.match[1];
@@ -411,6 +415,14 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
   ]);
   return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
 });
+
+// --- keyboard button handlers (must be before message:text catch-all) ---
+
+bot.hears(BTN.events, handleEvents);
+bot.hears(BTN.schedule, handleSchedule);
+bot.hears(BTN.myEvents, handleMyEvents);
+bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
+bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
 
 // --- name search (must be after commands) ---
 
