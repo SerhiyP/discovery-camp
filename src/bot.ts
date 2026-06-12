@@ -225,6 +225,43 @@ bot.command("broadcast", async (ctx) => {
   return ctx.reply(`Sent to ${sent}/${ids.length}`);
 });
 
+// --- admin commands ---
+
+bot.command("addleader", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.addLeaderUsage);
+  const [team, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const result = await addLeader(team, name);
+  if (result === "full") return ctx.reply(M.leaderAddedFull(team));
+  if (result === "duplicate") return ctx.reply(M.leaderAddedDuplicate(name, team));
+  return ctx.reply(M.leaderAdded(name, team));
+});
+
+bot.command("removeleader", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.removeLeaderUsage);
+  const [team, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const ok = await removeLeader(team, name);
+  if (!ok) return ctx.reply(M.leaderNotFoundAdmin(name, team));
+  return ctx.reply(M.leaderRemoved(name, team));
+});
+
+bot.command("listleaders", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const { leaders } = await loadLeaders();
+  if (leaders.length === 0) return ctx.reply(M.noLeaders);
+  const lines = [M.leadersListTitle, ""];
+  for (const l of leaders) lines.push(M.leaderListLine(l.team, l.name, !!l.telegramId));
+  return ctx.reply(lines.join("\n"));
+});
+
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
