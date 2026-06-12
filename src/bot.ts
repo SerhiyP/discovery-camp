@@ -72,10 +72,14 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   if (!ok || !visitor) return ctx.editMessageText(M.rowTaken);
 
-  await ctx.editMessageText(M.checkedIn(visitor.name));
-  const fileId = await videoForTeam(visitor.team);
-  if (fileId) {
-    await ctx.replyWithVideo(fileId, { caption: M.videoCaption });
+  await ctx.editMessageText(M.checkedIn(visitor.name, visitor.room || undefined));
+  const video = await videoForTeam(visitor.team);
+  if (video) {
+    if (video.isVideoNote) {
+      await ctx.replyWithVideoNote(video.fileId);
+    } else {
+      await ctx.replyWithVideo(video.fileId, { caption: M.videoCaption });
+    }
   }
 });
 
@@ -200,10 +204,15 @@ bot.callbackQuery(/^unreg:(.+)$/, async (ctx) => {
 // Admin sends/forwards a video to the bot -> bot replies with its file_id
 // (put it into the Videos tab or DEFAULT_VIDEO_FILE_ID).
 // Leaders can send a video to update their team's video.
-bot.on("message:video", async (ctx) => {
-  const fileId = ctx.message.video.file_id;
-  const { admins } = await loadAdmins();
+bot.on(["message:video", "message:video_note"], async (ctx) => {
+  const isVideoNote = !!ctx.message.video_note;
+  const fileId = ctx.message.video?.file_id ?? ctx.message.video_note!.file_id;
 
+  if (isSuperAdmin(ctx.from?.id)) {
+    return ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
+  }
+
+  const { admins } = await loadAdmins();
   if (isAdmin(ctx.from?.id, admins)) {
     return ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
   }
@@ -215,14 +224,14 @@ bot.on("message:video", async (ctx) => {
   const myTeams = [...new Set(mine.map((l) => l.team))];
 
   if (myTeams.length === 1) {
-    await updateTeamVideo(myTeams[0], fileId);
+    await updateTeamVideo(myTeams[0], fileId, isVideoNote);
     return ctx.reply(M.videoUpdated(myTeams[0]));
   }
 
   const caption = (ctx.message.caption ?? "").trim();
   const matched = myTeams.find((t) => t.toLowerCase() === caption.toLowerCase());
   if (matched) {
-    await updateTeamVideo(matched, fileId);
+    await updateTeamVideo(matched, fileId, isVideoNote);
     return ctx.reply(M.videoUpdated(matched));
   }
 
@@ -405,17 +414,16 @@ bot.on("message:text", async (ctx) => {
   const [sheet, leaderSheet] = await Promise.all([loadVisitors(), loadLeaders()]);
 
   const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
-  if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
-
   const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
-  if (meLeader.length > 0) {
-    return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
-  }
 
-  const visitorMatches = searchByName(sheet.visitors, ctx.message.text);
+  // Always search for unlinked leader entries — a visitor can also be a leader.
   const leaderMatches = searchLeaderByName(leaderSheet.leaders, ctx.message.text);
+  // Only search visitors if not yet linked as one.
+  const visitorMatches = meVisitor ? [] : searchByName(sheet.visitors, ctx.message.text);
 
   if (visitorMatches.length === 0 && leaderMatches.length === 0) {
+    if (meLeader.length > 0) return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
+    if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
     return ctx.reply(M.notFound);
   }
 
