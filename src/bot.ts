@@ -4,7 +4,10 @@ import {
   findByTelegramId,
   linkAndCheckIn,
   loadVisitors,
+  renameTeamVideo,
+  renameVisitorTeams,
   searchByName,
+  updateTeamVideo,
   videoForTeam,
 } from "./checkin";
 import {
@@ -17,10 +20,21 @@ import {
   upcomingEvents,
 } from "./events";
 import { M } from "./messages";
+import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
+import {
+  addLeader,
+  findLeadersByTelegramId,
+  loadLeaders,
+  removeLeader,
+  renameLeaderTeams,
+  searchLeaderByName,
+  setLeaderTelegramId,
+} from "./leaders";
+import { initCommandMenus, setCommandsForUser } from "./commands";
 
 export const bot = new Bot(config.botToken);
 
-const isAdmin = (id?: number) => !!id && config.adminIds.includes(id);
+const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
 // --- check-in ---
 
@@ -29,6 +43,19 @@ bot.command("start", async (ctx) => {
   const me = findByTelegramId(visitors, ctx.from!.id);
   if (me) return ctx.reply(M.alreadyLinked(me.name));
   return ctx.reply(M.welcome);
+});
+
+bot.command("myid", async (ctx) => {
+  await ctx.reply(M.yourId(ctx.from!.id), { parse_mode: "HTML" });
+});
+
+bot.command("leader", async (ctx) => {
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length > 0) {
+    return ctx.reply(M.leaderAlreadyLinked(mine[0].name, mine[0].team));
+  }
+  return ctx.reply(M.leaderPrompt);
 });
 
 bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
@@ -140,14 +167,15 @@ bot.callbackQuery(/^unreg:(.+)$/, async (ctx) => {
 // Admin sends/forwards a video to the bot -> bot replies with its file_id
 // (put it into the Videos tab or DEFAULT_VIDEO_FILE_ID).
 bot.on("message:video", async (ctx) => {
-  if (!isAdmin(ctx.from?.id)) return;
+  if (!isSuperAdmin(ctx.from?.id)) return;
   await ctx.reply(`file_id:\n<code>${ctx.message.video.file_id}</code>`, {
     parse_mode: "HTML",
   });
 });
 
 bot.command("broadcast", async (ctx) => {
-  if (!isAdmin(ctx.from?.id)) return;
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return;
   const text = ctx.match;
   if (!text) return ctx.reply("Usage: /broadcast <text>");
   const { visitors } = await loadVisitors();
