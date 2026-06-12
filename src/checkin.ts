@@ -111,17 +111,28 @@ export async function linkAndCheckIn(
   return { ok: true, visitor };
 }
 
-/** Team -> video from the Videos tab; falls back to DEFAULT_VIDEO_FILE_ID. Returns null if nothing configured. */
+/** Team ID -> video from the Videos tab; falls back to DEFAULT_VIDEO_FILE_ID. Returns null if nothing configured. */
 export async function videoForTeam(
-  team: string,
+  teamId: string,
 ): Promise<{ fileId: string; isVideoNote: boolean } | null> {
   try {
     const rows = await getRows(config.videosTab);
-    const target = normalize(team);
+    if (rows.length === 0) {
+      if (config.defaultVideoFileId) return { fileId: config.defaultVideoFileId, isVideoNote: false };
+      return null;
+    }
+    const header = rows[0];
+    const idCol = headerIndex(header, "ID");
+    const fileIdCol = headerIndex(header, "File ID");
+    const typeCol = headerIndex(header, "Type");
+    const target = teamId.trim();
     for (let i = 1; i < rows.length; i++) {
-      const [t, fileId, type] = rows[i];
-      if (t && fileId && normalize(t) === target) {
-        return { fileId: fileId.trim(), isVideoNote: (type ?? "").trim() === "video_note" };
+      const row = rows[i];
+      const id = (row[idCol] ?? "").trim();
+      const fileId = (row[fileIdCol] ?? "").trim();
+      if (id === target && fileId) {
+        const type = (row[typeCol] ?? "").trim();
+        return { fileId, isVideoNote: type === "video_note" };
       }
     }
   } catch {
@@ -133,21 +144,29 @@ export async function videoForTeam(
 
 /** Updates or inserts a team's video file_id and type in the Videos tab. */
 export async function updateTeamVideo(
-  team: string,
+  teamId: string,
   fileId: string,
   isVideoNote: boolean,
 ): Promise<void> {
   const rows = await getRows(config.videosTab);
-  const target = team.trim().toLowerCase();
   const type = isVideoNote ? "video_note" : "video";
-  for (let i = 1; i < rows.length; i++) {
-    if ((rows[i][0] ?? "").trim().toLowerCase() === target) {
-      await updateCell(config.videosTab, i, 1, fileId);
-      await updateCell(config.videosTab, i, 2, type);
-      return;
+  const target = teamId.trim();
+
+  if (rows.length > 0) {
+    const header = rows[0];
+    const idCol = headerIndex(header, "ID");
+    const fileIdCol = headerIndex(header, "File ID");
+    const typeCol = headerIndex(header, "Type");
+    for (let i = 1; i < rows.length; i++) {
+      if ((rows[i][idCol] ?? "").trim() === target) {
+        await updateCell(config.videosTab, i, fileIdCol, fileId);
+        await updateCell(config.videosTab, i, typeCol, type);
+        return;
+      }
     }
   }
-  await appendRow(config.videosTab, [team, fileId, type]);
+  // Row not found — append. ID and Team are both set to teamId.
+  await appendRow(config.videosTab, [teamId, teamId, fileId, type]);
 }
 
 /** Bulk-updates the team column in the responses sheet for all visitors on oldName. Returns count updated. */
