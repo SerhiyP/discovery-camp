@@ -16,6 +16,8 @@ export const config = {
   serviceAccountEmail: required("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
   privateKey: required("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n"),
   sheetId: required("SHEET_ID"),
+  // Read-only "Discovery 2026 AI сітка" spreadsheet (schedule grid, master classes)
+  gridSheetId: process.env.GRID_SHEET_ID ?? "",
 
   responsesTab: process.env.RESPONSES_TAB ?? "Form Responses 1",
   nameHeader: process.env.NAME_HEADER ?? "Прізвище та ім'я",
