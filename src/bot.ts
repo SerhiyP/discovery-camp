@@ -37,12 +37,24 @@ export const bot = new Bot(config.botToken);
 
 const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
+async function keyboardForUser(telegramId: number): Promise<import("grammy").Keyboard | undefined> {
+  const { leaders } = await loadLeaders();
+  const isLeader = findLeadersByTelegramId(leaders, telegramId).length > 0;
+  if (isLeader) return leaderKeyboard();
+  const { visitors } = await loadVisitors();
+  if (findByTelegramId(visitors, telegramId)) return visitorKeyboard();
+  return undefined;
+}
+
 // --- check-in ---
 
 bot.command("start", async (ctx) => {
   const { visitors } = await loadVisitors();
   const me = findByTelegramId(visitors, ctx.from!.id);
-  if (me) return ctx.reply(M.alreadyLinked(me.name));
+  if (me) {
+    const kb = await keyboardForUser(ctx.from!.id);
+    return ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
+  }
   return ctx.reply(M.welcome);
 });
 
@@ -74,6 +86,10 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   if (!ok || !visitor) return ctx.editMessageText(M.rowTaken);
 
   await ctx.editMessageText(M.checkedIn(visitor.name, visitor.room || undefined));
+  const kb = await keyboardForUser(ctx.from.id);
+  if (kb) {
+    await ctx.reply(M.keyboardReady, { reply_markup: kb });
+  }
   const video = await videoForTeam(visitor.team);
   if (video) {
     if (video.isVideoNote) {
@@ -115,6 +131,7 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
     ? "admin"
     : "leader";
   await setCommandsForUser(bot, ctx.from.id, role);
+  await ctx.reply(M.keyboardReady, { reply_markup: leaderKeyboard() });
 });
 
 // --- events ---

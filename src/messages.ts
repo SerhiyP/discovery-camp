@@ -90,4 +90,6 @@ export const M = {
   // Leader keyboard hints
   notifyTeamHint: "Напишіть команду з текстом:\n/notifyteam <ваше повідомлення>",
   renameTeamHint: "Напишіть команду з новою назвою:\n/renameteam <нова назва>",
+
+  keyboardReady: "Ось ваше меню 👇",
 };
