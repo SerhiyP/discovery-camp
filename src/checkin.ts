@@ -111,9 +111,9 @@ export async function linkAndCheckIn(
   return { ok: true, visitor };
 }
 
-/** Team name -> video from the Videos tab; falls back to DEFAULT_VIDEO_FILE_ID. Returns null if nothing configured. */
+/** Team ID -> video from the Videos tab; falls back to DEFAULT_VIDEO_FILE_ID. Returns null if nothing configured. */
 export async function videoForTeam(
-  teamName: string,
+  teamId: string,
 ): Promise<{ fileId: string; isVideoNote: boolean } | null> {
   try {
     const rows = await getRows(config.videosTab);
@@ -122,15 +122,15 @@ export async function videoForTeam(
       return null;
     }
     const header = rows[0];
-    const teamCol = headerIndex(header, "Team");
+    const idCol = headerIndex(header, "ID");
     const fileIdCol = headerIndex(header, "File ID");
     const typeCol = headerIndex(header, "Type");
-    const target = teamName.trim().toLowerCase();
+    const target = teamId.trim();
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
-      const team = (row[teamCol] ?? "").trim().toLowerCase();
+      const id = (row[idCol] ?? "").trim();
       const fileId = (row[fileIdCol] ?? "").trim();
-      if (team === target && fileId) {
+      if (id === target && fileId) {
         const type = (row[typeCol] ?? "").trim();
         return { fileId, isVideoNote: type === "video_note" };
       }
@@ -142,31 +142,29 @@ export async function videoForTeam(
   return null;
 }
 
-/** Updates or inserts a team's video file_id and type in the Videos tab (matched by Team name). */
+/** Updates a team's video file_id and type in the Videos tab (matched by ID). */
 export async function updateTeamVideo(
-  teamName: string,
+  teamId: string,
   fileId: string,
   isVideoNote: boolean,
 ): Promise<void> {
   const rows = await getRows(config.videosTab);
   const type = isVideoNote ? "video_note" : "video";
-  const target = teamName.trim().toLowerCase();
+  const target = teamId.trim();
 
   if (rows.length > 0) {
     const header = rows[0];
-    const teamCol = headerIndex(header, "Team");
+    const idCol = headerIndex(header, "ID");
     const fileIdCol = headerIndex(header, "File ID");
     const typeCol = headerIndex(header, "Type");
     for (let i = 1; i < rows.length; i++) {
-      if ((rows[i][teamCol] ?? "").trim().toLowerCase() === target) {
+      if ((rows[i][idCol] ?? "").trim() === target) {
         await updateCell(config.videosTab, i, fileIdCol, fileId);
         await updateCell(config.videosTab, i, typeCol, type);
         return;
       }
     }
   }
-  // Row not found — append without ID (user manages numeric IDs manually).
-  await appendRow(config.videosTab, ["", teamName, fileId, type]);
 }
 
 /** Bulk-updates the team column in the responses sheet for all visitors on oldName. Returns count updated. */
@@ -183,14 +181,16 @@ export async function renameVisitorTeams(oldName: string, newName: string): Prom
   return count;
 }
 
-/** Updates the Team name column in the Videos tab when a team is renamed (ID column untouched). */
-export async function renameTeamVideo(oldName: string, newName: string): Promise<void> {
+/** Updates the Team display name in the Videos tab when a team is renamed; matched and keyed by ID. */
+export async function renameTeamVideo(teamId: string, newName: string): Promise<void> {
   const rows = await getRows(config.videosTab);
   if (rows.length === 0) return;
-  const teamCol = headerIndex(rows[0], "Team");
-  const target = oldName.trim().toLowerCase();
+  const header = rows[0];
+  const idCol = headerIndex(header, "ID");
+  const teamCol = headerIndex(header, "Team");
+  const target = teamId.trim();
   for (let i = 1; i < rows.length; i++) {
-    if ((rows[i][teamCol] ?? "").trim().toLowerCase() === target) {
+    if ((rows[i][idCol] ?? "").trim() === target) {
       await updateCell(config.videosTab, i, teamCol, newName);
       return;
     }
