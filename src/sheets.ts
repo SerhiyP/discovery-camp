@@ -52,6 +52,14 @@ export async function appendRow(tab: string, values: string[]): Promise<void> {
   });
 }
 
+/** Clears all values in a row (rowIndex is 0-based including header). Used for soft-delete. */
+export async function clearRow(tab: string, rowIndex: number): Promise<void> {
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: config.sheetId,
+    range: `'${tab}'!${rowIndex + 1}:${rowIndex + 1}`,
+  });
+}
+
 /** Returns the 0-based index of a header, or -1. Trims and compares case-insensitively. */
 export function headerIndex(headerRow: string[], header: string): number {
   const target = header.trim().toLowerCase();
