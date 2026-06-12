@@ -85,11 +85,9 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   if (!ok || !visitor) return ctx.editMessageText(M.rowTaken);
 
-  await ctx.editMessageText(M.checkedIn(visitor.name, visitor.room || undefined));
+  await ctx.deleteMessage();
   const kb = await keyboardForUser(ctx.from.id);
-  if (kb) {
-    await ctx.reply(M.keyboardReady, { reply_markup: kb });
-  }
+  await ctx.reply(M.checkedIn(visitor.name, visitor.room || undefined), kb ? { reply_markup: kb } : {});
   const video = await videoForTeam(visitor.team);
   if (video) {
     if (video.isVideoNote) {
@@ -122,7 +120,7 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
 
   await setLeaderTelegramId(leaderSheet, rowIndex, ctx.from.id);
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(M.leaderCheckedIn(leader.name, leader.team));
+  await ctx.deleteMessage();
 
   const { admins } = await loadAdmins();
   const role = isSuperAdmin(ctx.from.id)
@@ -131,7 +129,7 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
     ? "admin"
     : "leader";
   await setCommandsForUser(bot, ctx.from.id, role);
-  await ctx.reply(M.keyboardReady, { reply_markup: leaderKeyboard() });
+  await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), { reply_markup: leaderKeyboard() });
 });
 
 // --- events ---
