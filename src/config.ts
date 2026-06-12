@@ -22,6 +22,7 @@ export const config = {
   checkinHeader: process.env.CHECKIN_HEADER ?? "Checked in",
   telegramIdHeader: process.env.TELEGRAM_ID_HEADER ?? "Telegram ID",
   teamHeader: process.env.TEAM_HEADER ?? "",
+  roomHeader: process.env.ROOM_HEADER ?? "Кімната",
 
   eventsTab: "Events",
   registrationsTab: "EventRegs",
