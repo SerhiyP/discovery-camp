@@ -369,18 +369,28 @@ bot.command("renameteam", async (ctx) => {
     return ctx.reply(M.renameTeamDone(oldTeam, newName, visitorsCount));
   }
   const kb = new InlineKeyboard();
-  for (const t of myTeams) kb.text(t, `renameteam:${t}:${newName}`).row();
+  for (let i = 0; i < myTeams.length; i++) kb.text(myTeams[i], `rt:${i}`).row();
   return ctx.reply(M.chooseTeamToRename(newName), { reply_markup: kb });
 });
 
-bot.callbackQuery(/^renameteam:([^:]+):(.+)$/, async (ctx) => {
-  const oldTeam = ctx.match[1];
-  const newName = ctx.match[2];
+bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
+  const idx = Number(ctx.match[1]);
+  const msgText = ctx.callbackQuery.message?.text ?? "";
+  const newNameMatch = msgText.match(/«(.+)»/);
+  if (!newNameMatch) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.renameTeamNoText);
+  }
+  const newName = newNameMatch[1];
   const { leaders } = await loadLeaders();
   const mine = findLeadersByTelegramId(leaders, ctx.from.id);
-  const ownsTeam = mine.some((l) => l.team === oldTeam);
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+  const oldTeam = myTeams[idx];
+  if (!oldTeam) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.notLeader);
+  }
   await ctx.answerCallbackQuery();
-  if (!ownsTeam) return ctx.editMessageText(M.notLeader);
   const [visitorsCount] = await Promise.all([
     renameVisitorTeams(oldTeam, newName),
     renameLeaderTeams(oldTeam, newName),
