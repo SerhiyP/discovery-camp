@@ -262,6 +262,46 @@ bot.command("listleaders", async (ctx) => {
   return ctx.reply(lines.join("\n"));
 });
 
+// --- superadmin commands ---
+
+bot.command("addadmin", async (ctx) => {
+  if (!isSuperAdmin(ctx.from?.id)) return ctx.reply(M.notSuperAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.addAdminUsage);
+  const [telegramId, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const result = await addAdmin(telegramId, name);
+  if (result === "duplicate") return ctx.reply(M.adminAddedDuplicate(telegramId));
+  await ctx.reply(M.adminAdded(name, telegramId));
+  const numId = Number(telegramId);
+  if (numId) await setCommandsForUser(bot, numId, "admin");
+});
+
+bot.command("removeadmin", async (ctx) => {
+  if (!isSuperAdmin(ctx.from?.id)) return ctx.reply(M.notSuperAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (!parts[0]) return ctx.reply(M.removeAdminUsage);
+  const telegramId = parts[0];
+  const ok = await removeAdmin(telegramId);
+  if (!ok) return ctx.reply(M.adminNotFound(telegramId));
+  await ctx.reply(M.adminRemoved(telegramId));
+  const numId = Number(telegramId);
+  if (numId) {
+    const { leaders } = await loadLeaders();
+    const stillLeader = findLeadersByTelegramId(leaders, numId).length > 0;
+    await setCommandsForUser(bot, numId, stillLeader ? "leader" : "user");
+  }
+});
+
+bot.command("listadmins", async (ctx) => {
+  if (!isSuperAdmin(ctx.from?.id)) return ctx.reply(M.notSuperAdmin);
+  const { admins } = await loadAdmins();
+  if (admins.length === 0) return ctx.reply(M.noAdmins);
+  const lines = [M.adminsListTitle, ""];
+  for (const a of admins) lines.push(M.adminListLine(a.name, a.telegramId));
+  return ctx.reply(lines.join("\n"));
+});
+
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
