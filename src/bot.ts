@@ -247,15 +247,15 @@ bot.on(["message:video", "message:video_note"], async (ctx) => {
   const myTeams = [...new Set(mine.map((l) => l.team))];
 
   if (myTeams.length === 1) {
-    await updateTeamVideo(myTeams[0], fileId, isVideoNote);
-    return ctx.reply(M.videoUpdated(myTeams[0]));
+    const ok = await updateTeamVideo(myTeams[0], fileId, isVideoNote);
+    return ctx.reply(ok ? M.videoUpdated(myTeams[0]) : `Команду «${myTeams[0]}» не знайдено у таблиці Videos (перевірте колонку ID).`);
   }
 
   const caption = (ctx.message.caption ?? "").trim();
   const matched = myTeams.find((t) => t.toLowerCase() === caption.toLowerCase());
   if (matched) {
-    await updateTeamVideo(matched, fileId, isVideoNote);
-    return ctx.reply(M.videoUpdated(matched));
+    const ok = await updateTeamVideo(matched, fileId, isVideoNote);
+    return ctx.reply(ok ? M.videoUpdated(matched) : `Команду «${matched}» не знайдено у таблиці Videos (перевірте колонку ID).`);
   }
 
   return ctx.reply(M.videoMultiTeamHint(myTeams.join(", ")));

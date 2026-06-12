@@ -142,12 +142,12 @@ export async function videoForTeam(
   return null;
 }
 
-/** Updates a team's video file_id and type in the Videos tab (matched by ID). */
+/** Updates a team's video file_id and type in the Videos tab (matched by ID). Returns true if row was found and updated. */
 export async function updateTeamVideo(
   teamId: string,
   fileId: string,
   isVideoNote: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const rows = await getRows(config.videosTab);
   const type = isVideoNote ? "video_note" : "video";
   const target = teamId.trim();
@@ -161,10 +161,11 @@ export async function updateTeamVideo(
       if ((rows[i][idCol] ?? "").trim() === target) {
         await updateCell(config.videosTab, i, fileIdCol, fileId);
         await updateCell(config.videosTab, i, typeCol, type);
-        return;
+        return true;
       }
     }
   }
+  return false;
 }
 
 /** Bulk-updates the team column in the responses sheet for all visitors on oldName. Returns count updated. */
