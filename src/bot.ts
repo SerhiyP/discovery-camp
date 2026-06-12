@@ -79,6 +79,39 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   }
 });
 
+bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
+  const rowIndex = Number(ctx.match[1]);
+  const leaderSheet = await loadLeaders();
+
+  const alreadyLinked = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
+  if (alreadyLinked.length > 0) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.leaderAlreadyLinked(alreadyLinked[0].name, alreadyLinked[0].team));
+  }
+
+  const leader = leaderSheet.leaders.find((l) => l.rowIndex === rowIndex);
+  if (!leader) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.leaderNotFound);
+  }
+  if (leader.telegramId && leader.telegramId !== String(ctx.from.id)) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.rowTaken);
+  }
+
+  await setLeaderTelegramId(leaderSheet, rowIndex, ctx.from.id);
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(M.leaderCheckedIn(leader.name, leader.team));
+
+  const { admins } = await loadAdmins();
+  const role = isSuperAdmin(ctx.from.id)
+    ? "superadmin"
+    : isAdmin(ctx.from.id, admins)
+    ? "admin"
+    : "leader";
+  await setCommandsForUser(bot, ctx.from.id, role);
+});
+
 // --- events ---
 
 function eventLine(e: { time: string; title: string }): string {
