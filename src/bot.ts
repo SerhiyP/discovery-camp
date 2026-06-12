@@ -4,7 +4,10 @@ import {
   findByTelegramId,
   linkAndCheckIn,
   loadVisitors,
+  renameTeamVideo,
+  renameVisitorTeams,
   searchByName,
+  updateTeamVideo,
   videoForTeam,
 } from "./checkin";
 import {
@@ -17,10 +20,21 @@ import {
   upcomingEvents,
 } from "./events";
 import { M } from "./messages";
+import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
+import {
+  addLeader,
+  findLeadersByTelegramId,
+  loadLeaders,
+  removeLeader,
+  renameLeaderTeams,
+  searchLeaderByName,
+  setLeaderTelegramId,
+} from "./leaders";
+import { initCommandMenus, setCommandsForUser } from "./commands";
 
 export const bot = new Bot(config.botToken);
 
-const isAdmin = (id?: number) => !!id && config.adminIds.includes(id);
+const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
 // --- check-in ---
 
@@ -29,6 +43,19 @@ bot.command("start", async (ctx) => {
   const me = findByTelegramId(visitors, ctx.from!.id);
   if (me) return ctx.reply(M.alreadyLinked(me.name));
   return ctx.reply(M.welcome);
+});
+
+bot.command("myid", async (ctx) => {
+  await ctx.reply(M.yourId(ctx.from!.id), { parse_mode: "HTML" });
+});
+
+bot.command("leader", async (ctx) => {
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length > 0) {
+    return ctx.reply(M.leaderAlreadyLinked(mine[0].name, mine[0].team));
+  }
+  return ctx.reply(M.leaderPrompt);
 });
 
 bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
@@ -50,6 +77,39 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   if (fileId) {
     await ctx.replyWithVideo(fileId, { caption: M.videoCaption });
   }
+});
+
+bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
+  const rowIndex = Number(ctx.match[1]);
+  const leaderSheet = await loadLeaders();
+
+  const alreadyLinked = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
+  if (alreadyLinked.length > 0) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.leaderAlreadyLinked(alreadyLinked[0].name, alreadyLinked[0].team));
+  }
+
+  const leader = leaderSheet.leaders.find((l) => l.rowIndex === rowIndex);
+  if (!leader) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.leaderNotFound);
+  }
+  if (leader.telegramId && leader.telegramId !== String(ctx.from.id)) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.rowTaken);
+  }
+
+  await setLeaderTelegramId(leaderSheet, rowIndex, ctx.from.id);
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(M.leaderCheckedIn(leader.name, leader.team));
+
+  const { admins } = await loadAdmins();
+  const role = isSuperAdmin(ctx.from.id)
+    ? "superadmin"
+    : isAdmin(ctx.from.id, admins)
+    ? "admin"
+    : "leader";
+  await setCommandsForUser(bot, ctx.from.id, role);
 });
 
 // --- events ---
@@ -139,15 +199,39 @@ bot.callbackQuery(/^unreg:(.+)$/, async (ctx) => {
 
 // Admin sends/forwards a video to the bot -> bot replies with its file_id
 // (put it into the Videos tab or DEFAULT_VIDEO_FILE_ID).
+// Leaders can send a video to update their team's video.
 bot.on("message:video", async (ctx) => {
-  if (!isAdmin(ctx.from?.id)) return;
-  await ctx.reply(`file_id:\n<code>${ctx.message.video.file_id}</code>`, {
-    parse_mode: "HTML",
-  });
+  const fileId = ctx.message.video.file_id;
+  const { admins } = await loadAdmins();
+
+  if (isAdmin(ctx.from?.id, admins)) {
+    return ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
+  }
+
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length === 0) return;
+
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+
+  if (myTeams.length === 1) {
+    await updateTeamVideo(myTeams[0], fileId);
+    return ctx.reply(M.videoUpdated(myTeams[0]));
+  }
+
+  const caption = (ctx.message.caption ?? "").trim();
+  const matched = myTeams.find((t) => t.toLowerCase() === caption.toLowerCase());
+  if (matched) {
+    await updateTeamVideo(matched, fileId);
+    return ctx.reply(M.videoUpdated(matched));
+  }
+
+  return ctx.reply(M.videoMultiTeamHint(myTeams.join(", ")));
 });
 
 bot.command("broadcast", async (ctx) => {
-  if (!isAdmin(ctx.from?.id)) return;
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return;
   const text = ctx.match;
   if (!text) return ctx.reply("Usage: /broadcast <text>");
   const { visitors } = await loadVisitors();
@@ -164,19 +248,203 @@ bot.command("broadcast", async (ctx) => {
   return ctx.reply(`Sent to ${sent}/${ids.length}`);
 });
 
+// --- admin commands ---
+
+bot.command("addleader", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.addLeaderUsage);
+  const [team, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const result = await addLeader(team, name);
+  if (result === "full") return ctx.reply(M.leaderAddedFull(team));
+  if (result === "duplicate") return ctx.reply(M.leaderAddedDuplicate(name, team));
+  return ctx.reply(M.leaderAdded(name, team));
+});
+
+bot.command("removeleader", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.removeLeaderUsage);
+  const [team, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const ok = await removeLeader(team, name);
+  if (!ok) return ctx.reply(M.leaderNotFoundAdmin(name, team));
+  return ctx.reply(M.leaderRemoved(name, team));
+});
+
+bot.command("listleaders", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const { leaders } = await loadLeaders();
+  if (leaders.length === 0) return ctx.reply(M.noLeaders);
+  const lines = [M.leadersListTitle, ""];
+  for (const l of leaders) lines.push(M.leaderListLine(l.team, l.name, !!l.telegramId));
+  return ctx.reply(lines.join("\n"));
+});
+
+// --- superadmin commands ---
+
+bot.command("addadmin", async (ctx) => {
+  if (!isSuperAdmin(ctx.from?.id)) return ctx.reply(M.notSuperAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.addAdminUsage);
+  const [telegramId, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const result = await addAdmin(telegramId, name);
+  if (result === "duplicate") return ctx.reply(M.adminAddedDuplicate(telegramId));
+  await ctx.reply(M.adminAdded(name, telegramId));
+  const numId = Number(telegramId);
+  if (numId) await setCommandsForUser(bot, numId, "admin");
+});
+
+bot.command("removeadmin", async (ctx) => {
+  if (!isSuperAdmin(ctx.from?.id)) return ctx.reply(M.notSuperAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (!parts[0]) return ctx.reply(M.removeAdminUsage);
+  const telegramId = parts[0];
+  const ok = await removeAdmin(telegramId);
+  if (!ok) return ctx.reply(M.adminNotFound(telegramId));
+  await ctx.reply(M.adminRemoved(telegramId));
+  const numId = Number(telegramId);
+  if (numId) {
+    const { leaders } = await loadLeaders();
+    const stillLeader = findLeadersByTelegramId(leaders, numId).length > 0;
+    await setCommandsForUser(bot, numId, stillLeader ? "leader" : "user");
+  }
+});
+
+bot.command("listadmins", async (ctx) => {
+  if (!isSuperAdmin(ctx.from?.id)) return ctx.reply(M.notSuperAdmin);
+  const { admins } = await loadAdmins();
+  if (admins.length === 0) return ctx.reply(M.noAdmins);
+  const lines = [M.adminsListTitle, ""];
+  for (const a of admins) lines.push(M.adminListLine(a.name, a.telegramId));
+  return ctx.reply(lines.join("\n"));
+});
+
+// --- leader commands ---
+
+bot.command("notifyteam", async (ctx) => {
+  const text = ctx.match.trim();
+  if (!text) return ctx.reply(M.notifyTeamNoText);
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length === 0) return ctx.reply(M.notLeader);
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+  const { visitors } = await loadVisitors();
+  const members = visitors.filter(
+    (v) => v.telegramId && myTeams.some((t) => t.toLowerCase() === v.team.toLowerCase()),
+  );
+  if (members.length === 0) return ctx.reply(M.notifyTeamEmpty);
+  const ids = [...new Set(members.map((v) => v.telegramId))];
+  let sent = 0;
+  for (const id of ids) {
+    try {
+      await bot.api.sendMessage(id, text);
+      sent++;
+    } catch {
+      // user blocked the bot or never started it
+    }
+  }
+  return ctx.reply(M.notifyTeamSent(sent, myTeams.join(", ")));
+});
+
+bot.command("renameteam", async (ctx) => {
+  const newName = ctx.match.trim();
+  if (!newName) return ctx.reply(M.renameTeamNoText);
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length === 0) return ctx.reply(M.notLeader);
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+  if (myTeams.length === 1) {
+    const oldTeam = myTeams[0];
+    const [visitorsCount] = await Promise.all([
+      renameVisitorTeams(oldTeam, newName),
+      renameLeaderTeams(oldTeam, newName),
+      renameTeamVideo(oldTeam, newName),
+    ]);
+    return ctx.reply(M.renameTeamDone(oldTeam, newName, visitorsCount));
+  }
+  const kb = new InlineKeyboard();
+  for (let i = 0; i < myTeams.length; i++) kb.text(myTeams[i], `rt:${i}`).row();
+  return ctx.reply(M.chooseTeamToRename(newName), { reply_markup: kb });
+});
+
+bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
+  const idx = Number(ctx.match[1]);
+  const msgText = ctx.callbackQuery.message?.text ?? "";
+  const newNameMatch = msgText.match(/«(.+)»/);
+  if (!newNameMatch) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.renameTeamNoText);
+  }
+  const newName = newNameMatch[1];
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from.id);
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+  const oldTeam = myTeams[idx];
+  if (!oldTeam) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.notLeader);
+  }
+  await ctx.answerCallbackQuery();
+  const [visitorsCount] = await Promise.all([
+    renameVisitorTeams(oldTeam, newName),
+    renameLeaderTeams(oldTeam, newName),
+    renameTeamVideo(oldTeam, newName),
+  ]);
+  return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
+});
+
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
-  const sheet = await loadVisitors();
-  const me = findByTelegramId(sheet.visitors, ctx.from.id);
-  if (me) return ctx.reply(M.alreadyLinked(me.name));
+  const [sheet, leaderSheet] = await Promise.all([loadVisitors(), loadLeaders()]);
 
-  const matches = searchByName(sheet.visitors, ctx.message.text);
-  if (matches.length === 0) return ctx.reply(M.notFound);
+  const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
+  if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
+
+  const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
+  if (meLeader.length > 0) {
+    return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
+  }
+
+  const visitorMatches = searchByName(sheet.visitors, ctx.message.text);
+  const leaderMatches = searchLeaderByName(leaderSheet.leaders, ctx.message.text);
+
+  if (visitorMatches.length === 0 && leaderMatches.length === 0) {
+    return ctx.reply(M.notFound);
+  }
 
   const kb = new InlineKeyboard();
-  for (const v of matches) kb.text(v.name, `link:${v.rowIndex}`).row();
-  return ctx.reply(matches.length === 1 ? M.confirmOne : M.chooseYourself, {
-    reply_markup: kb,
-  });
+
+  if (visitorMatches.length === 1 && leaderMatches.length === 0) {
+    kb.text(visitorMatches[0].name, `link:${visitorMatches[0].rowIndex}`).row();
+    return ctx.reply(M.confirmOne, { reply_markup: kb });
+  }
+
+  if (leaderMatches.length === 1 && visitorMatches.length === 0) {
+    const l = leaderMatches[0];
+    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+    return ctx.reply(M.confirmLeader(l.name, l.team), { reply_markup: kb });
+  }
+
+  for (const v of visitorMatches) kb.text(v.name, `link:${v.rowIndex}`).row();
+  for (const l of leaderMatches)
+    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+
+  return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
+
+// Set scoped command menus for all known privileged users on cold start.
+(async () => {
+  try {
+    const [{ admins }, { leaders }] = await Promise.all([loadAdmins(), loadLeaders()]);
+    await initCommandMenus(bot, admins, leaders);
+  } catch {
+    // Non-fatal: menus fall back to defaults if sheets are temporarily unavailable.
+  }
+})();
