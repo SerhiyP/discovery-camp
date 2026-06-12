@@ -302,6 +302,70 @@ bot.command("listadmins", async (ctx) => {
   return ctx.reply(lines.join("\n"));
 });
 
+// --- leader commands ---
+
+bot.command("notifyteam", async (ctx) => {
+  const text = ctx.match.trim();
+  if (!text) return ctx.reply(M.notifyTeamNoText);
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length === 0) return ctx.reply(M.notLeader);
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+  const { visitors } = await loadVisitors();
+  const members = visitors.filter(
+    (v) => v.telegramId && myTeams.some((t) => t.toLowerCase() === v.team.toLowerCase()),
+  );
+  if (members.length === 0) return ctx.reply(M.notifyTeamEmpty);
+  const ids = [...new Set(members.map((v) => v.telegramId))];
+  let sent = 0;
+  for (const id of ids) {
+    try {
+      await bot.api.sendMessage(id, text);
+      sent++;
+    } catch {
+      // user blocked the bot or never started it
+    }
+  }
+  return ctx.reply(M.notifyTeamSent(sent, myTeams.join(", ")));
+});
+
+bot.command("renameteam", async (ctx) => {
+  const newName = ctx.match.trim();
+  if (!newName) return ctx.reply(M.renameTeamNoText);
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length === 0) return ctx.reply(M.notLeader);
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+  if (myTeams.length === 1) {
+    const oldTeam = myTeams[0];
+    const [visitorsCount] = await Promise.all([
+      renameVisitorTeams(oldTeam, newName),
+      renameLeaderTeams(oldTeam, newName),
+      renameTeamVideo(oldTeam, newName),
+    ]);
+    return ctx.reply(M.renameTeamDone(oldTeam, newName, visitorsCount));
+  }
+  const kb = new InlineKeyboard();
+  for (const t of myTeams) kb.text(t, `renameteam:${t}:${newName}`).row();
+  return ctx.reply(M.chooseTeamToRename(newName), { reply_markup: kb });
+});
+
+bot.callbackQuery(/^renameteam:([^:]+):(.+)$/, async (ctx) => {
+  const oldTeam = ctx.match[1];
+  const newName = ctx.match[2];
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from.id);
+  const ownsTeam = mine.some((l) => l.team === oldTeam);
+  await ctx.answerCallbackQuery();
+  if (!ownsTeam) return ctx.editMessageText(M.notLeader);
+  const [visitorsCount] = await Promise.all([
+    renameVisitorTeams(oldTeam, newName),
+    renameLeaderTeams(oldTeam, newName),
+    renameTeamVideo(oldTeam, newName),
+  ]);
+  return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
+});
+
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
