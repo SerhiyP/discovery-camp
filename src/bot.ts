@@ -199,11 +199,34 @@ bot.callbackQuery(/^unreg:(.+)$/, async (ctx) => {
 
 // Admin sends/forwards a video to the bot -> bot replies with its file_id
 // (put it into the Videos tab or DEFAULT_VIDEO_FILE_ID).
+// Leaders can send a video to update their team's video.
 bot.on("message:video", async (ctx) => {
-  if (!isSuperAdmin(ctx.from?.id)) return;
-  await ctx.reply(`file_id:\n<code>${ctx.message.video.file_id}</code>`, {
-    parse_mode: "HTML",
-  });
+  const fileId = ctx.message.video.file_id;
+  const { admins } = await loadAdmins();
+
+  if (isAdmin(ctx.from?.id, admins)) {
+    return ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
+  }
+
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
+  if (mine.length === 0) return;
+
+  const myTeams = [...new Set(mine.map((l) => l.team))];
+
+  if (myTeams.length === 1) {
+    await updateTeamVideo(myTeams[0], fileId);
+    return ctx.reply(M.videoUpdated(myTeams[0]));
+  }
+
+  const caption = (ctx.message.caption ?? "").trim();
+  const matched = myTeams.find((t) => t.toLowerCase() === caption.toLowerCase());
+  if (matched) {
+    await updateTeamVideo(matched, fileId);
+    return ctx.reply(M.videoUpdated(matched));
+  }
+
+  return ctx.reply(M.videoMultiTeamHint(myTeams.join(", ")));
 });
 
 bot.command("broadcast", async (ctx) => {
