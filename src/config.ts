@@ -25,6 +25,8 @@ export const config = {
 
   eventsTab: "Events",
   registrationsTab: "EventRegs",
+  adminsTab: "Admins",
+  leadersTab: "Leaders",
   videosTab: "Videos",
 
   defaultVideoFileId: process.env.DEFAULT_VIDEO_FILE_ID ?? "",
