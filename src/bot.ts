@@ -195,16 +195,39 @@ bot.command("broadcast", async (ctx) => {
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
-  const sheet = await loadVisitors();
-  const me = findByTelegramId(sheet.visitors, ctx.from.id);
-  if (me) return ctx.reply(M.alreadyLinked(me.name));
+  const [sheet, leaderSheet] = await Promise.all([loadVisitors(), loadLeaders()]);
 
-  const matches = searchByName(sheet.visitors, ctx.message.text);
-  if (matches.length === 0) return ctx.reply(M.notFound);
+  const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
+  if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
+
+  const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
+  if (meLeader.length > 0) {
+    return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
+  }
+
+  const visitorMatches = searchByName(sheet.visitors, ctx.message.text);
+  const leaderMatches = searchLeaderByName(leaderSheet.leaders, ctx.message.text);
+
+  if (visitorMatches.length === 0 && leaderMatches.length === 0) {
+    return ctx.reply(M.notFound);
+  }
 
   const kb = new InlineKeyboard();
-  for (const v of matches) kb.text(v.name, `link:${v.rowIndex}`).row();
-  return ctx.reply(matches.length === 1 ? M.confirmOne : M.chooseYourself, {
-    reply_markup: kb,
-  });
+
+  if (visitorMatches.length === 1 && leaderMatches.length === 0) {
+    kb.text(visitorMatches[0].name, `link:${visitorMatches[0].rowIndex}`).row();
+    return ctx.reply(M.confirmOne, { reply_markup: kb });
+  }
+
+  if (leaderMatches.length === 1 && visitorMatches.length === 0) {
+    const l = leaderMatches[0];
+    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+    return ctx.reply(M.confirmLeader(l.name, l.team), { reply_markup: kb });
+  }
+
+  for (const v of visitorMatches) kb.text(v.name, `link:${v.rowIndex}`).row();
+  for (const l of leaderMatches)
+    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+
+  return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
