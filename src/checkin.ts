@@ -1,5 +1,5 @@
 import { config, nowStamp } from "./config";
-import { getRows, headerIndex, updateCell } from "./sheets";
+import { appendRow, getRows, headerIndex, updateCell } from "./sheets";
 
 export interface Visitor {
   rowIndex: number; // 0-based, including header row
@@ -121,4 +121,43 @@ export async function videoForTeam(team: string): Promise<string> {
     // Videos tab is optional
   }
   return config.defaultVideoFileId;
+}
+
+/** Updates or inserts a team's video file_id in the Videos tab. */
+export async function updateTeamVideo(team: string, fileId: string): Promise<void> {
+  const rows = await getRows(config.videosTab);
+  const target = team.trim().toLowerCase();
+  for (let i = 1; i < rows.length; i++) {
+    if ((rows[i][0] ?? "").trim().toLowerCase() === target) {
+      await updateCell(config.videosTab, i, 1, fileId);
+      return;
+    }
+  }
+  await appendRow(config.videosTab, [team, fileId]);
+}
+
+/** Bulk-updates the team column in the responses sheet for all visitors on oldName. Returns count updated. */
+export async function renameVisitorTeams(oldName: string, newName: string): Promise<number> {
+  const sheet = await loadVisitors();
+  if (sheet.cols.team < 0) return 0;
+  let count = 0;
+  for (const v of sheet.visitors) {
+    if (v.team.toLowerCase() === oldName.toLowerCase()) {
+      await updateCell(config.responsesTab, v.rowIndex, sheet.cols.team, newName);
+      count++;
+    }
+  }
+  return count;
+}
+
+/** Updates the team name in the Videos tab when a team is renamed. */
+export async function renameTeamVideo(oldName: string, newName: string): Promise<void> {
+  const rows = await getRows(config.videosTab);
+  const target = oldName.trim().toLowerCase();
+  for (let i = 1; i < rows.length; i++) {
+    if ((rows[i][0] ?? "").trim().toLowerCase() === target) {
+      await updateCell(config.videosTab, i, 0, newName);
+      return;
+    }
+  }
 }
