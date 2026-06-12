@@ -428,3 +428,13 @@ bot.on("message:text", async (ctx) => {
 
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
+
+// Set scoped command menus for all known privileged users on cold start.
+(async () => {
+  try {
+    const [{ admins }, { leaders }] = await Promise.all([loadAdmins(), loadLeaders()]);
+    await initCommandMenus(bot, admins, leaders);
+  } catch {
+    // Non-fatal: menus fall back to defaults if sheets are temporarily unavailable.
+  }
+})();
