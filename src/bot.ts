@@ -208,13 +208,17 @@ bot.on(["message:video", "message:video_note"], async (ctx) => {
   const isVideoNote = !!ctx.message.video_note;
   const fileId = ctx.message.video?.file_id ?? ctx.message.video_note!.file_id;
 
-  if (isSuperAdmin(ctx.from?.id)) {
-    return ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
-  }
+  let sentFileId = false;
 
-  const { admins } = await loadAdmins();
-  if (isAdmin(ctx.from?.id, admins)) {
-    return ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
+  if (isSuperAdmin(ctx.from?.id)) {
+    await ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
+    sentFileId = true;
+  } else {
+    const { admins } = await loadAdmins();
+    if (isAdmin(ctx.from?.id, admins)) {
+      await ctx.reply(`file_id:\n<code>${fileId}</code>`, { parse_mode: "HTML" });
+      sentFileId = true;
+    }
   }
 
   const { leaders } = await loadLeaders();
