@@ -9,12 +9,19 @@ const auth = new google.auth.JWT({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-export async function getRows(tab: string): Promise<string[][]> {
+export async function getRowsFromSpreadsheet(
+  spreadsheetId: string,
+  tab: string,
+): Promise<string[][]> {
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: config.sheetId,
+    spreadsheetId,
     range: `'${tab}'`,
   });
   return (res.data.values as string[][]) ?? [];
+}
+
+export async function getRows(tab: string): Promise<string[][]> {
+  return getRowsFromSpreadsheet(config.sheetId, tab);
 }
 
 /** Column index (0-based) to A1 letter: 0 -> A, 26 -> AA. */
