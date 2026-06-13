@@ -15,6 +15,9 @@ export const M = {
   noEventsToday: "На сьогодні подій немає.",
   eventsToday: "Події на сьогодні:",
   scheduleTitle: "Розклад подій:",
+  scheduleGridTitle: (dayLabel: string) => `📅 Розклад — ${dayLabel}`,
+  scheduleGridLine: (slot: { time: string; activity: string; isCurrent: boolean }) =>
+    `${slot.isCurrent ? "▶ " : ""}${slot.time} ${slot.activity}`,
   registered: (title: string) => `Ви зареєстровані на «${title}» ✅`,
   unregistered: (title: string) => `Реєстрацію на «${title}» скасовано.`,
   eventFull: "На жаль, місць більше немає 😔",
