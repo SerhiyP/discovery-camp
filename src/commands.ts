@@ -5,30 +5,25 @@ import { Leader } from "./leaders";
 
 export type UserRole = "user" | "leader" | "admin" | "superadmin";
 
+// Only zero-arg commands belong in the slash menu. Tapping a menu entry sends
+// it instantly with no arguments, so arg-taking commands (addleader, broadcast,
+// notifyteam, renameteam, …) are intentionally omitted — they must be typed by
+// hand. Leaders reach notifyteam/renameteam via the reply-keyboard buttons.
 const USER_COMMANDS = [
   { command: "events", description: "Події на сьогодні" },
   { command: "schedule", description: "Розклад" },
   { command: "myevents", description: "Мої реєстрації" },
 ];
 
-const LEADER_COMMANDS = [
-  ...USER_COMMANDS,
-  { command: "notifyteam", description: "Повідомити свою команду" },
-  { command: "renameteam", description: "Перейменувати команду" },
-];
+const LEADER_COMMANDS = [...USER_COMMANDS];
 
 const ADMIN_COMMANDS = [
   ...LEADER_COMMANDS,
-  { command: "addleader", description: "Додати лідера: /addleader Команда Прізвище Імʼя" },
-  { command: "removeleader", description: "Видалити лідера: /removeleader Команда Прізвище Імʼя" },
   { command: "listleaders", description: "Список лідерів" },
-  { command: "broadcast", description: "Розсилка всім учасникам" },
 ];
 
 const SUPERADMIN_COMMANDS = [
   ...ADMIN_COMMANDS,
-  { command: "addadmin", description: "Додати адміна: /addadmin TelegramID Імʼя" },
-  { command: "removeadmin", description: "Видалити адміна: /removeadmin TelegramID" },
   { command: "listadmins", description: "Список адмінів" },
 ];
 
