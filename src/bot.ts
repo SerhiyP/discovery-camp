@@ -19,6 +19,7 @@ import {
   unregister,
   upcomingEvents,
 } from "./events";
+import { loadTodaySchedule } from "./schedule";
 import { M } from "./messages";
 import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
 import {
@@ -158,6 +159,16 @@ async function handleEvents(ctx: Context) {
 }
 
 async function handleSchedule(ctx: Context) {
+  const today = await loadTodaySchedule();
+  if (today) {
+    const lines = [
+      M.scheduleGridTitle(today.dayLabel),
+      "",
+      ...today.slots.map((s) => M.scheduleGridLine(s)),
+    ];
+    return ctx.reply(lines.join("\n"));
+  }
+
   const events = upcomingEvents(await loadEvents());
   if (events.length === 0) return ctx.reply(M.noEventsToday);
   const byDate = new Map<string, string[]>();
