@@ -19,6 +19,7 @@ import {
   unregister,
   upcomingEvents,
 } from "./events";
+import { loadTodaySchedule } from "./schedule";
 import { M } from "./messages";
 import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
 import {
@@ -158,6 +159,18 @@ async function handleEvents(ctx: Context) {
 }
 
 async function handleSchedule(ctx: Context) {
+  const result = await loadTodaySchedule();
+  if (result.status === "finished") return ctx.reply(M.scheduleCampFinished);
+  if (result.status === "ok") {
+    const { schedule } = result;
+    const lines: string[] = [];
+    if (!schedule.isToday) lines.push(M.scheduleNotStarted, "");
+    lines.push(M.scheduleGridTitle(schedule.dayLabel), "");
+    lines.push(...schedule.slots.map((s) => M.scheduleGridLine(s)));
+    return ctx.reply(lines.join("\n"));
+  }
+
+  // status === "unavailable" → fall back to the events list
   const events = upcomingEvents(await loadEvents());
   if (events.length === 0) return ctx.reply(M.noEventsToday);
   const byDate = new Map<string, string[]>();
