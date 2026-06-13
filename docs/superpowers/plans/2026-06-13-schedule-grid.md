@@ -10,6 +10,13 @@
 
 **Testing note:** This repo has no test runner or local dev server (per CLAUDE.md). Each task is verified with `npm run typecheck` (must pass clean) and by inspecting the diff against the spec. Runtime behavior is confirmed after deploy (`npx vercel --prod` + `npm run set-webhook`), which is out of scope for these tasks.
 
+> **Post-implementation refinement (not in the original 4 tasks below):** after Tasks 1–4 landed,
+> the schedule button was extended to handle camp phases — `loadTodaySchedule` now returns a
+> discriminated `ScheduleResult` (`ok` / `finished` / `unavailable`): before the camp it shows the
+> first day's column (no highlight) with a "not started" note, after the camp a thank-you message,
+> and the current-activity highlight is applied only when the shown day is actually today. See the
+> updated design spec for the final behavior; the tasks below describe the original today-only build.
+
 ---
 
 ### Task 1: Spreadsheet-agnostic row reader

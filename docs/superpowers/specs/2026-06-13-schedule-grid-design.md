@@ -5,9 +5,15 @@
 
 ## Goal
 
-When a user taps the **🗓 Розклад** button, show the real camp schedule for **today**, read live
-from the shared grid spreadsheet, with the **currently-running activity highlighted**. If today is
-outside the camp dates (or the grid is unavailable), fall back to the existing event-list behavior.
+When a user taps the **🗓 Розклад** button, show the real camp schedule read live from the shared
+grid spreadsheet, adapting to the camp phase:
+
+- **During camp** — today's column, with the **currently-running activity highlighted**.
+- **Before camp** — the **first day's** column (no highlight), prefixed by a "camp hasn't started"
+  note.
+- **After camp** — a thank-you "camp finished" message (no schedule).
+- **Grid unavailable** (env unset / unreadable / no dated columns) — fall back to the existing
+  event-list behavior.
 
 ## Background
 
@@ -52,42 +58,55 @@ for existing callers.
 ```ts
 export interface ScheduleSlot {
   time: string;       // as shown in column A, e.g. "14:00"
-  activity: string;   // activity text for today's column
+  activity: string;   // activity text for the shown day's column
   isCurrent: boolean; // true for the single highlighted slot, if any
 }
 
-export interface TodaySchedule {
-  dayLabel: string;       // e.g. "Вівторок 04.08"
+export interface DaySchedule {
+  dayLabel: string;   // e.g. "Вівторок 04.08"
   slots: ScheduleSlot[];
+  isToday: boolean;   // false when showing the first day before the camp starts
 }
 
-export async function loadTodaySchedule(): Promise<TodaySchedule | null>
+export type ScheduleResult =
+  | { status: "ok"; schedule: DaySchedule }
+  | { status: "finished" }     // today is past the last camp day
+  | { status: "unavailable" }; // grid not configured / unreadable / no dated columns
+
+export async function loadTodaySchedule(): Promise<ScheduleResult>
 ```
 
 **Algorithm:**
 
-1. If `config.gridSheetId` is empty → return `null`.
+1. If `config.gridSheetId` is empty → `{ status: "unavailable" }`.
 2. `rows = await getRowsFromSpreadsheet(config.gridSheetId, "3.Розклад табору 2026")`.
-   If `rows.length < 3` → return `null`.
-3. **Find today's column.** Take the header row at index 1. For each cell, match
-   `/(\d{2})\.(\d{2})\.(\d{4})/`; if found, reconstruct `YYYY-MM-DD` and compare to `todayISO()`.
-   The first matching cell gives `colIdx`. If none match → return `null` (outside camp dates).
-4. **Build `dayLabel`.** From the matched header cell: take the weekday word (text before the first
-   newline/date) and `DD.MM` from the matched date → `` `${weekday} ${DD}.${MM}` ``. If the weekday
-   word is missing, fall back to `DD.MM`.
-5. **Collect slots.** For each row from index 2 onward, read `time = row[0]` and
-   `activity = row[colIdx]` (both trimmed). Keep the row **only if both are non-empty**.
-6. **Mark current.** Compute current Kyiv time as minutes-since-midnight. Parse each slot's `time`
-   (`H:MM` or `HH:MM`) into minutes. The highlighted slot is the **last** slot whose start ≤ now.
-   If now is before the first slot, no slot is marked. Set `isCurrent` on that one slot only.
-7. Return `{ dayLabel, slots }`.
+   If `rows.length < 3` → `{ status: "unavailable" }`.
+3. **Parse dated columns.** From the header row at index 1, for each cell match
+   `/(\d{2})\.(\d{2})\.(\d{4})/`; for each match record `{ colIdx, dateISO (YYYY-MM-DD), dd, mm,
+   weekday }` where `weekday` is the text before the first newline. If no cell matches →
+   `{ status: "unavailable" }`. Sort columns by `dateISO`.
+4. **Pick the phase.**
+   - If `todayISO() > lastColumn.dateISO` → `{ status: "finished" }` (camp is over).
+   - Otherwise `target` = first column with `dateISO >= todayISO()` (today's column during camp, or
+     the first day when the camp hasn't started). `isToday = target.dateISO === todayISO()`.
+5. **Build `dayLabel`.** `` `${weekday} ${dd}.${mm}` `` from `target`, or `` `${dd}.${mm}` `` if the
+   weekday word is missing.
+6. **Collect slots.** For each row from index 2 onward, read `time = row[0]` and
+   `activity = row[target.colIdx]` (both trimmed). Keep the row **only if both are non-empty**.
+7. **Mark current — only when `isToday`.** Compute current Kyiv time as minutes-since-midnight; parse
+   each slot's `time` (`H:MM`/`HH:MM`) into minutes; highlight the **last** slot whose start ≤ now.
+   When `!isToday` (pre-camp first day) no slot is highlighted, since nothing is running yet.
+8. Return `{ status: "ok", schedule: { dayLabel, slots, isToday } }`.
 
 **Helpers (private to the module):**
 - `currentKyivMinutes(): number` — uses `Intl.DateTimeFormat` with `timeZone: config.timeZone`,
   `hour`/`minute` numeric, `hourCycle: "h23"`.
-- `parseMinutes(time: string): number | null` — splits on `:`, returns `h*60+m` or `null`.
+- `parseMinutes(time: string): number | null` — matches `^(\d{1,2}):(\d{2})$`, returns `h*60+m`.
+- `parseColumns(header: string[]): GridColumn[]` — extracts the dated day-header columns.
 
-### 3. `src/messages.ts` — formatter
+String date comparison on `YYYY-MM-DD` is used throughout (lexicographic order == chronological).
+
+### 3. `src/messages.ts` — strings
 
 Add:
 
@@ -95,21 +114,28 @@ Add:
 scheduleGridTitle: (dayLabel: string) => `📅 Розклад — ${dayLabel}`,
 scheduleGridLine: (slot: { time: string; activity: string; isCurrent: boolean }) =>
   `${slot.isCurrent ? "▶ " : ""}${slot.time} ${slot.activity}`,
+scheduleNotStarted: "Табір ще не розпочався.\nОсь розклад першого дня:",
+scheduleCampFinished: "Табір завершено.\nДякуємо, що були з нами! 🎉",
 ```
 
 (Existing `scheduleTitle` / `noEventsToday` are kept for the fallback path.)
 
 ### 4. `src/bot.ts` — wire into `handleSchedule`
 
-`handleSchedule(ctx)` first tries the grid:
+`handleSchedule(ctx)` branches on the result status:
 
 ```ts
-const today = await loadTodaySchedule();
-if (today) {
-  const lines = [M.scheduleGridTitle(today.dayLabel), "", ...today.slots.map(M.scheduleGridLine)];
+const result = await loadTodaySchedule();
+if (result.status === "finished") return ctx.reply(M.scheduleCampFinished);
+if (result.status === "ok") {
+  const { schedule } = result;
+  const lines: string[] = [];
+  if (!schedule.isToday) lines.push(M.scheduleNotStarted, "");
+  lines.push(M.scheduleGridTitle(schedule.dayLabel), "");
+  lines.push(...schedule.slots.map((s) => M.scheduleGridLine(s)));
   return ctx.reply(lines.join("\n"));
 }
-// fall back to existing upcomingEvents() rendering
+// status === "unavailable" → fall back to existing upcomingEvents() rendering
 ```
 
 The `bot.hears(BTN.schedule, handleSchedule)` and `bot.command("schedule", handleSchedule)`
@@ -143,11 +169,12 @@ At 14:30 on Tuesday 04.08:
 
 | Case | Behavior |
 |---|---|
-| `GRID_SHEET_ID` unset | `loadTodaySchedule()` returns `null` → events-list fallback |
-| Today outside camp dates | No header matches → `null` → fallback |
-| Grid tab renamed / unreachable | Sheets call returns `[]` or throws; `< 3` rows → `null`; a throw propagates to `handleSchedule` like the existing path |
-| Now before first slot | No `▶` shown |
-| Now after last slot | Last slot highlighted (e.g. `▶ 23:30 off`) |
+| `GRID_SHEET_ID` unset | `{ status: "unavailable" }` → events-list fallback |
+| Grid tab renamed / unreachable / no dated columns | `< 3` rows or no header dates → `unavailable` → fallback; a hard throw propagates to `handleSchedule` like the existing path |
+| Today before the first camp day | First day's column shown, prefixed by `scheduleNotStarted`, **no** `▶` highlight |
+| Today after the last camp day | `{ status: "finished" }` → thank-you message, no schedule |
+| Now before first slot (during camp) | No `▶` shown |
+| Now after last slot (during camp) | Last slot highlighted (e.g. `▶ 23:30 off`) |
 | Short day column (Saturday) | Empty cells filtered out; `▶` lands on last real slot (`12:00 Час з командою`) |
 | Times returned unpadded (`7:30`) | Parsed into minutes, so comparison still correct |
 
