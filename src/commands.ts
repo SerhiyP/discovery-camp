@@ -50,23 +50,20 @@ export async function initCommandMenus(bot: Bot, admins: Admin[], leaders: Leade
   // No default menu — visitors use the reply keyboard instead
   await bot.api.setMyCommands([]);
 
-  // Leader menus first (may be overridden by admin/superadmin below)
-  const linkedLeaderIds = [
-    ...new Set(leaders.filter((l) => l.telegramId).map((l) => Number(l.telegramId))),
-  ];
-  for (const id of linkedLeaderIds) {
-    await setCommandsForUser(bot, id, "leader");
+  // Build highest-role map so each user gets exactly one API call.
+  // Order matters: later writes win (leader < admin < superadmin).
+  const roleMap = new Map<number, UserRole>();
+  for (const l of leaders) {
+    if (l.telegramId) roleMap.set(Number(l.telegramId), "leader");
   }
-
-  // Admin menus (override leader if someone is both)
-  for (const admin of admins) {
-    if (admin.telegramId) {
-      await setCommandsForUser(bot, Number(admin.telegramId), "admin");
-    }
+  for (const a of admins) {
+    if (a.telegramId) roleMap.set(Number(a.telegramId), "admin");
   }
-
-  // Superadmin menus (override everything)
   for (const id of config.adminIds) {
-    await setCommandsForUser(bot, id, "superadmin");
+    roleMap.set(id, "superadmin");
   }
+
+  await Promise.all(
+    [...roleMap.entries()].map(([id, role]) => setCommandsForUser(bot, id, role)),
+  );
 }
