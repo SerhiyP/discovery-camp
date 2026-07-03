@@ -28,6 +28,7 @@ export const config = {
 
   eventsTab: "Events",
   registrationsTab: "EventRegs",
+  mcScheduleTab: "MCSchedule",
   adminsTab: "Admins",
   leadersTab: "Leaders",
   videosTab: "Videos",
