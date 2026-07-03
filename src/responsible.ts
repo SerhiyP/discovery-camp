@@ -100,12 +100,6 @@ export async function addResponsible(
   return "ok";
 }
 
-export async function removeResponsible(mcId: string, name: string): Promise<boolean> {
-  const { responsible } = await loadResponsible();
-  const row = responsible.find(
-    (r) => r.mcId === mcId && normalizeStr(r.name) === normalizeStr(name),
-  );
-  if (!row) return false;
-  await clearRow(config.responsibleTab, row.rowIndex);
-  return true;
+export async function removeResponsibleByRow(rowIndex: number): Promise<void> {
+  await clearRow(config.responsibleTab, rowIndex);
 }

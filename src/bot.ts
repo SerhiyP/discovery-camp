@@ -17,6 +17,7 @@ import {
   loadMCSchedule,
   Masterclass,
   register,
+  splitResponsibleNames,
   todaySlots,
   unregister,
 } from "./masterclasses";
@@ -39,7 +40,7 @@ import {
   findResponsibleByTelegramId,
   linkResponsibleRows,
   loadResponsible,
-  removeResponsible,
+  removeResponsibleByRow,
   searchResponsibleByName,
 } from "./responsible";
 
@@ -175,6 +176,13 @@ bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
 
 // --- masterclasses ---
 
+interface MCSlotButton {
+  mc: Masterclass;
+  taken: number;
+  mine: boolean;
+  cbData: string;
+}
+
 async function handleMasterclasses(ctx: Context) {
   const [mcs, schedule, regs] = await Promise.all([
     loadMasterclasses(),
@@ -182,11 +190,10 @@ async function handleMasterclasses(ctx: Context) {
     loadMCRegistrations(),
   ]);
   const slots = todaySlots(schedule);
-  let sentAny = false;
+  const kb = new InlineKeyboard();
+  let anyListed = false;
   for (const s of slots) {
-    const kb = new InlineKeyboard();
-    const lines: string[] = [M.mcSlotTitle(s.slot), ""];
-    let listed = 0;
+    const buttons: MCSlotButton[] = [];
     for (const id of s.mcIds) {
       const mc = mcs.find((m) => m.id === id);
       if (!mc) continue; // unknown ID in MCSchedule (or empty catalog) — skip silently
@@ -195,15 +202,20 @@ async function handleMasterclasses(ctx: Context) {
       const cbData = `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`;
       // Telegram rejects the whole message if any button's callback data exceeds 64 bytes
       if (Buffer.byteLength(cbData) > 64) continue;
-      lines.push(M.mcLine(mc, taken.length, mine));
-      kb.text(`${mine ? "❌" : "📝"} ${mc.title}`, cbData).row();
-      listed++;
+      buttons.push({ mc, taken: taken.length, mine, cbData });
     }
-    if (listed === 0) continue;
-    await ctx.reply(lines.join("\n"), { reply_markup: kb });
-    sentAny = true;
+    if (buttons.length === 0) continue;
+    kb.text(`— ${s.slot} —`, "mcnoop").row();
+    for (const b of buttons) {
+      const label = `${b.mine ? "❌" : "📝"} ${b.mc.title}${
+        b.mc.capacity > 0 ? ` — ${b.taken}/${b.mc.capacity}` : ""
+      }`;
+      kb.text(label, b.cbData).row();
+    }
+    anyListed = true;
   }
-  if (!sentAny) return ctx.reply(M.noMasterclassesToday);
+  if (!anyListed) return ctx.reply(M.noMasterclassesToday);
+  return ctx.reply(M.mcDayTitle, { reply_markup: kb });
 }
 
 async function handleSchedule(ctx: Context) {
@@ -253,14 +265,14 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const result = await register(date, slot, mcId, mc.capacity, ctx.from.id, me.name);
   await ctx.answerCallbackQuery(
     result === "ok"
-      ? M.mcRegistered(mc.title, slot)
+      ? M.mcRegistered(mc.title, slot, mc.place)
       : result === "full"
         ? M.mcFull
         : result === "already"
           ? M.mcAlready
           : M.mcSlotTaken,
   );
-  if (result === "ok") await ctx.reply(M.mcRegistered(mc.title, slot));
+  if (result === "ok") await ctx.reply(M.mcRegistered(mc.title, slot, mc.place));
   if (result === "slot_taken") await ctx.reply(M.mcSlotTaken);
 });
 
@@ -273,6 +285,9 @@ bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   if (ok && mc) await ctx.reply(M.mcUnregistered(mc.title, slot));
 });
+
+// Inert tap target for the slot-header row in the combined masterclass list.
+bot.callbackQuery("mcnoop", (ctx) => ctx.answerCallbackQuery());
 
 // --- admin helpers ---
 
@@ -388,18 +403,104 @@ bot.command("addresp", async (ctx) => {
   return ctx.reply(M.respAdded(name, mc.title));
 });
 
+async function buildDelRespPicker(): Promise<{ text: string; kb: InlineKeyboard } | null> {
+  const [{ responsible }, mcs] = await Promise.all([loadResponsible(), loadMasterclasses()]);
+  if (responsible.length === 0) return null;
+  const kb = new InlineKeyboard();
+  const knownIds = new Set(mcs.map((m) => m.id));
+  const groups = [
+    ...mcs.map((mc) => ({ title: mc.title, rows: responsible.filter((r) => r.mcId === mc.id) })),
+    ...[...new Set(responsible.filter((r) => !knownIds.has(r.mcId)).map((r) => r.mcId))].map(
+      (mcId) => ({ title: `МК ${mcId}`, rows: responsible.filter((r) => r.mcId === mcId) }),
+    ),
+  ];
+  for (const g of groups) {
+    if (g.rows.length === 0) continue;
+    kb.text(`— ${g.title} —`, "mcnoop").row();
+    for (const r of g.rows) kb.text(`❌ ${r.name}`, `delresp:${r.rowIndex}`).row();
+  }
+  return { text: M.delRespPickerTitle, kb };
+}
+
 bot.command("delresp", async (ctx) => {
   const { admins } = await loadAdmins();
   if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
-  const parts = ctx.match.trim().split(/\s+/);
-  if (parts.length < 2) return ctx.reply(M.delRespUsage);
-  const [mcId, ...nameParts] = parts;
-  const name = nameParts.join(" ");
-  const ok = await removeResponsible(mcId, name);
-  if (!ok) return ctx.reply(M.respNotFoundAdmin(name, mcId));
+  const picker = await buildDelRespPicker();
+  if (!picker) return ctx.reply(M.noResponsiblePersons);
+  return ctx.reply(picker.text, { reply_markup: picker.kb });
+});
+
+bot.callbackQuery(/^delresp:(\d+)$/, async (ctx) => {
+  const rowIndex = Number(ctx.match[1]);
+  const { responsible } = await loadResponsible();
+  const row = responsible.find((r) => r.rowIndex === rowIndex);
+  await ctx.answerCallbackQuery();
+  if (!row) return ctx.editMessageText(M.delRespGone);
   const mcs = await loadMasterclasses();
-  const title = mcs.find((m) => m.id === mcId)?.title ?? `МК ${mcId}`;
-  return ctx.reply(M.respRemoved(name, title));
+  const title = mcs.find((m) => m.id === row.mcId)?.title ?? `МК ${row.mcId}`;
+  const kb = new InlineKeyboard()
+    .text("✅ Так, видалити", `delrespyes:${rowIndex}`)
+    .text("↩️ Скасувати", "delrespcancel");
+  return ctx.editMessageText(M.confirmDelResp(row.name, title), { reply_markup: kb });
+});
+
+bot.callbackQuery(/^delrespyes:(\d+)$/, async (ctx) => {
+  const rowIndex = Number(ctx.match[1]);
+  const { responsible } = await loadResponsible();
+  const row = responsible.find((r) => r.rowIndex === rowIndex);
+  await ctx.answerCallbackQuery();
+  if (!row) return ctx.editMessageText(M.delRespGone);
+  await removeResponsibleByRow(rowIndex);
+  const mcs = await loadMasterclasses();
+  const title = mcs.find((m) => m.id === row.mcId)?.title ?? `МК ${row.mcId}`;
+  return ctx.editMessageText(M.respRemoved(row.name, title));
+});
+
+bot.callbackQuery("delrespcancel", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const picker = await buildDelRespPicker();
+  if (!picker) return ctx.editMessageText(M.noResponsiblePersons);
+  return ctx.editMessageText(picker.text, { reply_markup: picker.kb });
+});
+
+async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promise<void> {
+  let buf: string[] = [];
+  let len = 0;
+  for (const line of lines) {
+    const lineLen = line.length + 1;
+    if (len + lineLen > limit && buf.length > 0) {
+      await ctx.reply(buf.join("\n"));
+      buf = [];
+      len = 0;
+    }
+    buf.push(line);
+    len += lineLen;
+  }
+  if (buf.length > 0) await ctx.reply(buf.join("\n"));
+}
+
+bot.command("syncresp", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const mcs = await loadMasterclasses();
+  if (mcs.length === 0) return ctx.reply(M.mcCatalogUnavailable);
+  const lines: string[] = [M.mcSyncTitle, ""];
+  let added = 0;
+  let existing = 0;
+  for (const mc of mcs) {
+    for (const name of splitResponsibleNames(mc.responsible)) {
+      const result = await addResponsible(mc.id, name);
+      if (result === "ok") {
+        lines.push(M.mcSyncAdded(name, mc.title));
+        added++;
+      } else {
+        lines.push(M.mcSyncDuplicate(name, mc.title));
+        existing++;
+      }
+    }
+  }
+  lines.push("", M.mcSyncSummary(added, existing));
+  return replyChunked(ctx, lines);
 });
 
 // --- superadmin commands ---

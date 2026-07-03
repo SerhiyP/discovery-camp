@@ -70,6 +70,15 @@ export async function loadMasterclasses(): Promise<Masterclass[]> {
   return mcs;
 }
 
+/** Splits a catalog "Відповідальний" cell into individual names, e.g.
+ *  "Лєна Бабій і Інна Коляденко" -> ["Лєна Бабій", "Інна Коляденко"]. */
+export function splitResponsibleNames(text: string): string[] {
+  return text
+    .split(/\s+(?:і|й|та)\s+|\s*,\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export async function loadMCSchedule(): Promise<SlotSchedule[]> {
   const rows = await getRows(config.mcScheduleTab);
   if (rows.length === 0) return [];

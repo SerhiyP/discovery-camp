@@ -13,17 +13,9 @@ export const M = {
     `Готово, ${name}! Ви відмічені ✅${room ? `\nВаша кімната: ${room}` : ""}\nГарного табору! 🎉`,
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
   noMasterclassesToday: "Сьогодні майстер-класів немає.",
-  mcSlotTitle: (slot: string) => `🎨 Майстер-класи ${slot}:`,
-  mcLine: (
-    mc: { title: string; place: string; capacity: number },
-    taken: number,
-    mine: boolean,
-  ) =>
-    `• ${mc.title} (${mc.place})${
-      mc.capacity > 0 ? ` — ${taken}/${mc.capacity}` : ""
-    }${mine ? " ✅" : ""}`,
-  mcRegistered: (title: string, slot: string) =>
-    `Ви зареєстровані на «${title}» (${slot}) ✅`,
+  mcDayTitle: "🎨 Майстер-класи сьогодні:",
+  mcRegistered: (title: string, slot: string, place: string) =>
+    `Ви зареєстровані на «${title}» (${slot}, ${place}) ✅`,
   mcUnregistered: (title: string, slot: string) =>
     `Реєстрацію на «${title}» (${slot}) скасовано.`,
   mcFull: "На жаль, місць більше немає 😔",
@@ -95,7 +87,6 @@ export const M = {
 
   // Responsible admin commands
   addRespUsage: "Використання: /addresp <ID майстер-класу> <Прізвище та ім'я>",
-  delRespUsage: "Використання: /delresp <ID майстер-класу> <Прізвище та ім'я>",
   mcNotFoundAdmin: (mcId: string) =>
     `Майстер-клас з ID ${mcId} не знайдено у каталозі.`,
   respAdded: (name: string, title: string) =>
@@ -104,8 +95,16 @@ export const M = {
     `${name} вже відповідальний за «${title}».`,
   respRemoved: (name: string, title: string) =>
     `${name} більше не відповідальний за «${title}» ✅`,
-  respNotFoundAdmin: (name: string, mcId: string) =>
-    `Відповідального ${name} для МК ${mcId} не знайдено.`,
+  mcCatalogUnavailable: "Каталог майстер-класів недоступний.",
+  mcSyncTitle: "Синхронізація відповідальних:",
+  mcSyncAdded: (name: string, title: string) => `✅ ${name} — ${title}`,
+  mcSyncDuplicate: (name: string, title: string) => `⚪ ${name} — ${title} (вже є)`,
+  mcSyncSummary: (added: number, existing: number) =>
+    `Додано: ${added}, вже було: ${existing}.`,
+  noResponsiblePersons: "Відповідальних ще немає.",
+  delRespPickerTitle: "Кого видалити з відповідальних?",
+  confirmDelResp: (name: string, title: string) => `Видалити ${name} з «${title}»?`,
+  delRespGone: "Цей запис уже видалено.",
 
   // Superadmin commands
   notSuperAdmin: "Ця команда доступна лише суперадміну.",
