@@ -55,6 +55,14 @@ export const M = {
   leaderNotFound:
     "Не знайшли вас у списку лідерів 😔 Зверніться до адміністратора.",
 
+  // Responsible check-in
+  confirmResp: (name: string) =>
+    `Це ви — відповідальний за майстер-клас?\n${name}\n\nНатисніть, щоб підтвердитись 👇`,
+  respCheckedIn: (name: string, titles: string) =>
+    `Готово, ${name}! Ви підключені як відповідальний за: ${titles} ✅`,
+  respNotFound:
+    "Не знайшли вас у списку відповідальних 😔 Зверніться до адміністратора.",
+
   // Leader commands
   notifyTeamNoText: "Використання: /notifyteam <текст повідомлення>",
   notifyTeamEmpty: "У вашій команді ще ніхто не підключився до бота.",
@@ -84,6 +92,20 @@ export const M = {
   leadersListTitle: "Список лідерів:",
   leaderListLine: (team: string, name: string, linked: boolean) =>
     `• [${team}] ${name}${linked ? " ✅" : " (не підключений)"}`,
+
+  // Responsible admin commands
+  addRespUsage: "Використання: /addresp <ID майстер-класу> <Прізвище та ім'я>",
+  delRespUsage: "Використання: /delresp <ID майстер-класу> <Прізвище та ім'я>",
+  mcNotFoundAdmin: (mcId: string) =>
+    `Майстер-клас з ID ${mcId} не знайдено у каталозі.`,
+  respAdded: (name: string, title: string) =>
+    `${name} — відповідальний за «${title}» ✅`,
+  respDuplicate: (name: string, title: string) =>
+    `${name} вже відповідальний за «${title}».`,
+  respRemoved: (name: string, title: string) =>
+    `${name} більше не відповідальний за «${title}» ✅`,
+  respNotFoundAdmin: (name: string, mcId: string) =>
+    `Відповідального ${name} для МК ${mcId} не знайдено.`,
 
   // Superadmin commands
   notSuperAdmin: "Ця команда доступна лише суперадміну.",

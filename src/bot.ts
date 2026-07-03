@@ -33,7 +33,14 @@ import {
 } from "./leaders";
 import { initCommandMenus, setCommandsForUser } from "./commands";
 import { BTN, roleKeyboard } from "./keyboards";
-import { findResponsibleByTelegramId, loadResponsible } from "./responsible";
+import {
+  addResponsible,
+  findResponsibleByTelegramId,
+  linkResponsibleRows,
+  loadResponsible,
+  removeResponsible,
+  searchResponsibleByName,
+} from "./responsible";
 
 export const bot = new Bot(config.botToken);
 
@@ -136,6 +143,33 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
   await setCommandsForUser(bot, ctx.from.id, role);
   const kb = await keyboardForUser(ctx.from.id);
   await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), kb ? { reply_markup: kb } : {});
+});
+
+bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
+  const rowIndex = Number(ctx.match[1]);
+  const sheet = await loadResponsible();
+
+  const row = sheet.responsible.find((r) => r.rowIndex === rowIndex);
+  if (!row) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.respNotFound);
+  }
+  if (row.telegramId && row.telegramId !== String(ctx.from.id)) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.rowTaken);
+  }
+
+  // Links every unlinked row with this name — one person may run several MCs.
+  const linked = await linkResponsibleRows(sheet, row.name, ctx.from.id);
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage();
+
+  const mcs = await loadMasterclasses();
+  const titles = linked
+    .map((r) => mcs.find((m) => m.id === r.mcId)?.title ?? `МК ${r.mcId}`)
+    .join(", ");
+  const kb = await keyboardForUser(ctx.from.id);
+  await ctx.reply(M.respCheckedIn(row.name, titles), kb ? { reply_markup: kb } : {});
 });
 
 // --- masterclasses ---
@@ -336,6 +370,35 @@ bot.command("listleaders", async (ctx) => {
   return ctx.reply(lines.join("\n"));
 });
 
+bot.command("addresp", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.addRespUsage);
+  const [mcId, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const mcs = await loadMasterclasses();
+  const mc = mcs.find((m) => m.id === mcId);
+  if (!mc) return ctx.reply(M.mcNotFoundAdmin(mcId));
+  const result = await addResponsible(mcId, name);
+  if (result === "duplicate") return ctx.reply(M.respDuplicate(name, mc.title));
+  return ctx.reply(M.respAdded(name, mc.title));
+});
+
+bot.command("delresp", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.delRespUsage);
+  const [mcId, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const ok = await removeResponsible(mcId, name);
+  if (!ok) return ctx.reply(M.respNotFoundAdmin(name, mcId));
+  const mcs = await loadMasterclasses();
+  const title = mcs.find((m) => m.id === mcId)?.title ?? `МК ${mcId}`;
+  return ctx.reply(M.respRemoved(name, title));
+});
+
 // --- superadmin commands ---
 
 bot.command("addadmin", async (ctx) => {
@@ -461,17 +524,24 @@ bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
-  const [sheet, leaderSheet] = await Promise.all([loadVisitors(), loadLeaders()]);
+  const [sheet, leaderSheet, respSheet] = await Promise.all([
+    loadVisitors(),
+    loadLeaders(),
+    loadResponsible(),
+  ]);
 
   const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
   const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
 
-  // Always search for unlinked leader entries — a visitor can also be a leader.
+  // Always search unlinked leader/responsible entries — a visitor can also hold those roles.
   const leaderMatches = searchLeaderByName(leaderSheet.leaders, ctx.message.text);
+  const respRows = searchResponsibleByName(respSheet.responsible, ctx.message.text);
+  // One button per distinct person: the link_resp handler links all their rows at once.
+  const respMatches = [...new Map(respRows.map((r) => [r.name.toLowerCase(), r])).values()];
   // Only search visitors if not yet linked as one.
   const visitorMatches = meVisitor ? [] : searchByName(sheet.visitors, ctx.message.text);
 
-  if (visitorMatches.length === 0 && leaderMatches.length === 0) {
+  if (visitorMatches.length === 0 && leaderMatches.length === 0 && respMatches.length === 0) {
     if (meLeader.length > 0) return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
     if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
     return ctx.reply(M.notFound);
@@ -479,20 +549,27 @@ bot.on("message:text", async (ctx) => {
 
   const kb = new InlineKeyboard();
 
-  if (visitorMatches.length === 1 && leaderMatches.length === 0) {
+  if (visitorMatches.length === 1 && leaderMatches.length === 0 && respMatches.length === 0) {
     kb.text(visitorMatches[0].name, `link:${visitorMatches[0].rowIndex}`).row();
     return ctx.reply(M.confirmOne, { reply_markup: kb });
   }
 
-  if (leaderMatches.length === 1 && visitorMatches.length === 0) {
+  if (leaderMatches.length === 1 && visitorMatches.length === 0 && respMatches.length === 0) {
     const l = leaderMatches[0];
     kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
     return ctx.reply(M.confirmLeader(l.name, l.team), { reply_markup: kb });
   }
 
+  if (respMatches.length === 1 && visitorMatches.length === 0 && leaderMatches.length === 0) {
+    const r = respMatches[0];
+    kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
+    return ctx.reply(M.confirmResp(r.name), { reply_markup: kb });
+  }
+
   for (const v of visitorMatches) kb.text(v.name, `link:${v.rowIndex}`).row();
   for (const l of leaderMatches)
     kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+  for (const r of respMatches) kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
 
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
