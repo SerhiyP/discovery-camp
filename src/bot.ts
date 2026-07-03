@@ -32,18 +32,22 @@ import {
   setLeaderTelegramId,
 } from "./leaders";
 import { initCommandMenus, setCommandsForUser } from "./commands";
-import { BTN, leaderKeyboard, visitorKeyboard } from "./keyboards";
+import { BTN, roleKeyboard } from "./keyboards";
+import { findResponsibleByTelegramId, loadResponsible } from "./responsible";
 
 export const bot = new Bot(config.botToken);
 
 const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
 async function keyboardForUser(telegramId: number): Promise<import("grammy").Keyboard | undefined> {
-  const { leaders } = await loadLeaders();
+  const [{ leaders }, { responsible }] = await Promise.all([loadLeaders(), loadResponsible()]);
   const isLeader = findLeadersByTelegramId(leaders, telegramId).length > 0;
-  if (isLeader) return leaderKeyboard();
+  const isResponsible = findResponsibleByTelegramId(responsible, telegramId).length > 0;
+  if (isLeader || isResponsible) {
+    return roleKeyboard({ leader: isLeader, responsible: isResponsible });
+  }
   const { visitors } = await loadVisitors();
-  if (findByTelegramId(visitors, telegramId)) return visitorKeyboard();
+  if (findByTelegramId(visitors, telegramId)) return roleKeyboard();
   return undefined;
 }
 
@@ -130,7 +134,8 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
     ? "admin"
     : "leader";
   await setCommandsForUser(bot, ctx.from.id, role);
-  await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), { reply_markup: leaderKeyboard() });
+  const kb = await keyboardForUser(ctx.from.id);
+  await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), kb ? { reply_markup: kb } : {});
 });
 
 // --- events ---
@@ -446,9 +451,9 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
 
 // --- keyboard button handlers (must be before message:text catch-all) ---
 
-bot.hears(BTN.events, handleEvents);
+bot.hears(BTN.masterclasses, handleEvents);
 bot.hears(BTN.schedule, handleSchedule);
-bot.hears(BTN.myEvents, handleMyEvents);
+bot.hears(BTN.myRegs, handleMyEvents);
 bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
 bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
 
