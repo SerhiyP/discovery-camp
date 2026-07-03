@@ -16,22 +16,37 @@ retired; the existing buttons and registration UX are repurposed.
 
 ## Sheets schema
 
-All tabs live in the main `SHEET_ID` spreadsheet.
+Bot-managed tabs live in the main `SHEET_ID` spreadsheet; the masterclass **catalog is
+read-only from the grid spreadsheet** (`GRID_SHEET_ID`, the same one the «Розклад» grid
+uses).
 
-### `Masterclasses` (new, admin-filled catalog)
+### Masterclass catalog (existing tab `5.Майстер-класи 2026` in `GRID_SHEET_ID`)
+
+Maintained by the organizers; the bot only reads it. Real layout:
 
 ```
-ID | Title            | Responsible                  | Place        | Capacity
-1  | Медична допомога | Лєна Бабій і Інна Коляденко  | Ковчег       | 0
-2  | Кулінарія        | Таня Кучер і Оля Даценко     | Тераса       |
-...
+row 1: МАЙСТЕР - КЛАСИ  Discovery 2026 | 12:00-13:00 \ 14:00-15:30   (banner)
+row 2: № | Назва | Відповідальний | Місце проведення | Подарунки | Кількість учасників | Інвентар | …
+row 3: 1. | Медична допомога | Лєна Бабій і Інна Коляденко | Ковчег | … | 15 | …
+…
+row 10: 8. | Рукоділля | Лєна Кротик | Столова | … | 12 | …
+(rows below: tournament tables — must be ignored)
 ```
 
-- `ID` — permanent numeric key (same convention as `Videos.ID`).
-- `Responsible` — display text only; actual role linking lives in `MCResponsible`.
-- `Capacity` — empty or `0` = unlimited.
+Parsing rules:
 
-### `MCSchedule` (new, admin-filled availability)
+- The header row is **found by scanning** for a row containing `Назва` (it is not row 1).
+- Columns used: `№` (ID), `Назва` (title), `Відповідальний` (display text only — real
+  role linking lives in `MCResponsible`), `Місце проведення` (place),
+  `Кількість учасників` (capacity).
+- `№` values look like `1.` — the trailing dot is stripped; the canonical ID is `1`.
+  Rows whose `№` is not a number (blank rows, tournament rows below the catalog) are
+  skipped.
+- Capacity: a number, or `без обмежень` / blank = unlimited (stored as `0`).
+- If `GRID_SHEET_ID` is unset or the header row isn't found, the catalog is empty and
+  the visitor flow answers «Сьогодні майстер-класів немає.»
+
+### `MCSchedule` (new, admin-filled availability — main `SHEET_ID` spreadsheet)
 
 One row per date+slot; lists which masterclasses run then.
 
@@ -44,8 +59,8 @@ Date       | Slot        | MC IDs
 - `Date` — `YYYY-MM-DD` (matches `todayISO()`).
 - `Slot` — free-form label shown to users verbatim (e.g. `12:00-13:00`); also used as
   part of the registration key, so it must be consistent within a day.
-- `MC IDs` — comma-separated `Masterclasses.ID` values. IDs not found in the catalog are
-  silently skipped.
+- `MC IDs` — comma-separated catalog `№` values (canonical form, e.g. `1`, not `1.`).
+  IDs not found in the catalog are silently skipped.
 
 ### `EventRegs` (existing tab, new schema — bot-managed)
 
@@ -82,8 +97,11 @@ MC ID | Name | Telegram ID | Added at
 - `SlotSchedule` interface: `date`, `slot`, `mcIds: string[]`.
 - `MCRegistration` interface: `rowIndex`, `date`, `slot`, `mcId`, `telegramId`, `name`,
   `cancelled`.
-- `loadMasterclasses()`, `loadMCSchedule()`, `loadMCRegistrations()` — sheet readers
-  following the `headerIndex` pattern.
+- `loadMasterclasses()` — reads the catalog from the grid spreadsheet via
+  `getRowsFromSpreadsheet(config.gridSheetId, "5.Майстер-класи 2026")` with the parsing
+  rules above; returns `[]` when `gridSheetId` is unset or the header row is missing.
+- `loadMCSchedule()`, `loadMCRegistrations()` — main-sheet readers following the
+  `headerIndex` pattern.
 - `todaySlots(schedule)` — `MCSchedule` rows for `todayISO()`.
 - `activeRegs(regs, date, slot, mcId)` — non-cancelled registrations for one occurrence.
 - `register(date, slot, mcId, capacity, telegramId, name)` →
@@ -106,9 +124,10 @@ MC ID | Name | Telegram ID | Added at
 
 ### `src/config.ts`
 
-- New tab-name config entries: `masterclassesTab` (`Masterclasses`), `mcScheduleTab`
-  (`MCSchedule`), `responsibleTab` (`MCResponsible`). `registrationsTab` keeps pointing
-  at `EventRegs`. `eventsTab` is removed.
+- New tab-name config entries: `mcScheduleTab` (`MCSchedule`), `responsibleTab`
+  (`MCResponsible`). The catalog tab name is a module constant in `masterclasses.ts`
+  (like `GRID_TAB` in `schedule.ts`). `registrationsTab` keeps pointing at `EventRegs`.
+  `eventsTab` is removed.
 
 ### `src/keyboards.ts`
 
@@ -204,8 +223,9 @@ added to admin and superadmin menus.
 
 ## One-time sheet migration (manual, by admin)
 
-1. Create `Masterclasses` tab and fill the 8-row catalog.
-2. Create `MCSchedule` tab and fill dates/slots.
+1. Catalog already exists in the grid spreadsheet (`5.Майстер-класи 2026`) — nothing to
+   create; just keep `№`, `Назва`, `Місце проведення`, `Кількість учасників` filled.
+2. Create `MCSchedule` tab (main spreadsheet) and fill dates/slots.
 3. Replace the `EventRegs` header row with the new columns; delete old data rows.
 4. Create `MCResponsible` tab with the header row.
 5. (Optional) delete the `Events` tab.
