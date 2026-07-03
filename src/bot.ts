@@ -15,6 +15,7 @@ import {
   loadMasterclasses,
   loadMCRegistrations,
   loadMCSchedule,
+  Masterclass,
   register,
   todaySlots,
   unregister,
@@ -513,6 +514,97 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
   return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
 });
 
+// --- responsible tools ---
+
+interface MCOccurrence {
+  date: string;
+  slot: string;
+  mc: Masterclass;
+}
+
+/** Today's occurrences of the user's masterclasses, in deterministic sheet order.
+ *  Returns null if the user is not a responsible person. */
+async function myOccurrencesToday(telegramId: number): Promise<MCOccurrence[] | null> {
+  const { responsible } = await loadResponsible();
+  const mine = findResponsibleByTelegramId(responsible, telegramId);
+  if (mine.length === 0) return null;
+  const myIds = [...new Set(mine.map((r) => r.mcId))];
+  const [mcs, schedule] = await Promise.all([loadMasterclasses(), loadMCSchedule()]);
+  const occ: MCOccurrence[] = [];
+  for (const s of todaySlots(schedule)) {
+    for (const id of s.mcIds) {
+      if (!myIds.includes(id)) continue;
+      const mc = mcs.find((m) => m.id === id);
+      if (mc) occ.push({ date: s.date, slot: s.slot, mc });
+    }
+  }
+  return occ;
+}
+
+async function handleMcAttendees(ctx: Context) {
+  const occ = await myOccurrencesToday(ctx.from!.id);
+  if (occ === null) return ctx.reply(M.notResponsible);
+  if (occ.length === 0) return ctx.reply(M.noMyMcToday);
+  const regs = await loadMCRegistrations();
+  const lines: string[] = [];
+  for (const o of occ) {
+    const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+    lines.push(M.mcAttendeesHeader(o.mc.title, o.slot, o.mc.place, taken.length, o.mc.capacity));
+    if (taken.length === 0) lines.push(M.mcNoAttendees);
+    for (const r of taken) lines.push(`• ${r.name}`);
+    lines.push("");
+  }
+  return ctx.reply(lines.join("\n").trimEnd());
+}
+
+async function notifyOccurrence(ctx: Context, o: MCOccurrence, text: string) {
+  const regs = await loadMCRegistrations();
+  const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+  const ids = [...new Set(taken.map((r) => r.telegramId))];
+  let sent = 0;
+  for (const id of ids) {
+    try {
+      await bot.api.sendMessage(id, text);
+      sent++;
+    } catch {
+      // user blocked the bot or never started it
+    }
+  }
+  return ctx.reply(M.mcNotifySent(sent, ids.length, o.mc.title, o.slot));
+}
+
+bot.command("notifymc", async (ctx) => {
+  const text = ctx.match.trim();
+  if (!text) return ctx.reply(M.mcNotifyNoText);
+  const occ = await myOccurrencesToday(ctx.from!.id);
+  if (occ === null) return ctx.reply(M.notResponsible);
+  if (occ.length === 0) return ctx.reply(M.noMyMcToday);
+  if (occ.length === 1) return notifyOccurrence(ctx, occ[0], text);
+  const kb = new InlineKeyboard();
+  occ.forEach((o, i) => kb.text(`${o.mc.title} (${o.slot})`, `mn:${i}`).row());
+  return ctx.reply(M.mcNotifyChoose(text), { reply_markup: kb });
+});
+
+bot.callbackQuery(/^mn:(\d+)$/, async (ctx) => {
+  const idx = Number(ctx.match[1]);
+  // The notify text is embedded in the picker message («…»), like the renameteam flow.
+  const msgText = ctx.callbackQuery.message?.text ?? "";
+  const textMatch = msgText.match(/«([\s\S]+)»/);
+  if (!textMatch) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.mcNotifyNoText);
+  }
+  const occ = await myOccurrencesToday(ctx.from.id);
+  const o = occ?.[idx];
+  if (!o) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.noMyMcToday);
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage();
+  return notifyOccurrence(ctx, o, textMatch[1]);
+});
+
 // --- keyboard button handlers (must be before message:text catch-all) ---
 
 bot.hears(BTN.masterclasses, handleMasterclasses);
@@ -520,6 +612,8 @@ bot.hears(BTN.schedule, handleSchedule);
 bot.hears(BTN.myRegs, handleMyRegs);
 bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
 bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
+bot.hears(BTN.mcAttendees, handleMcAttendees);
+bot.hears(BTN.mcNotify, (ctx) => ctx.reply(M.mcNotifyHint));
 
 // --- name search (must be after commands) ---
 

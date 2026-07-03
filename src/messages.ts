@@ -125,4 +125,16 @@ export const M = {
   notifyTeamHint: "Напишіть команду з текстом:\n/notifyteam <ваше повідомлення>",
   renameTeamHint: "Напишіть команду з новою назвою:\n/renameteam <нова назва>",
 
+  // Responsible tools
+  notResponsible: "Ця функція доступна лише відповідальним за майстер-класи.",
+  noMyMcToday: "Сьогодні ваших майстер-класів немає.",
+  mcAttendeesHeader: (title: string, slot: string, place: string, taken: number, capacity: number) =>
+    `🎨 ${title} — ${slot}, ${place} (${taken}${capacity > 0 ? `/${capacity}` : ""}):`,
+  mcNoAttendees: "— поки нікого",
+  mcNotifyNoText: "Використання: /notifymc <текст повідомлення>",
+  mcNotifyHint: "Напишіть команду з текстом:\n/notifymc <ваше повідомлення>",
+  mcNotifyChoose: (text: string) =>
+    `Учасникам якого майстер-класу надіслати «${text}»?`,
+  mcNotifySent: (sent: number, total: number, title: string, slot: string) =>
+    `Надіслано ${sent}/${total} учасникам «${title}» (${slot}) ✅`,
 };
