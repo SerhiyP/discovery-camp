@@ -48,7 +48,7 @@ All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 
 - **`RESPONSES_TAB`** (default: `Form Responses 1`) — Google Form responses; bot adds `Checked in` and `Telegram ID` columns to the right. Also reads `Команда` (team ID) and `Кімната` (room number) columns.
 - **Masterclass catalog** — read-only from the grid spreadsheet (`GRID_SHEET_ID`), tab `5.Майстер-класи 2026`: columns `№ | Назва | Відповідальний | Місце проведення | … | Кількість учасників`. The header row is auto-detected (first row containing `Назва`); `№` like `1.` → ID `1`; capacity `без обмежень`/blank = unlimited; non-numeric-`№` rows (tournament tables) are skipped.
-- **`MCSchedule`** — `Date | Slot | MC IDs` (date `YYYY-MM-DD`, slot shown verbatim, MC IDs comma-separated catalog `№` values).
+- **`MCSchedule`** — `Date | Slot | MC IDs` (date `YYYY-MM-DD`, slot shown verbatim, MC IDs comma-separated catalog `№` values). Keep `Slot` short (e.g. `12:00-13:00`) — it is embedded in button callback data (64-byte Telegram limit).
 - **`EventRegs`** — `Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at` (bot-managed masterclass registrations; one active registration per user per date+slot).
 - **`MCResponsible`** — `MC ID | Name | Telegram ID | Added at` (bot-managed via `/addresp`; linked at check-in by name like leaders).
 - **`Videos`** — `ID | Team | File ID | Type` for per-team leader videos. `ID` is a permanent numeric key; `Team` is a display name that can be renamed. `Type` is `video_note` or `video`.

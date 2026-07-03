@@ -1246,7 +1246,8 @@ One-time sheet migration by the admin, then deploy:
    `Кількість учасників` filled. Make sure the service account can read `GRID_SHEET_ID`
    (it already does for the «Розклад» grid).
 2. Create `MCSchedule` and `MCResponsible` tabs in the main spreadsheet with the headers
-   above; fill the schedule dates/slots.
+   above; fill the schedule dates/slots. Keep `Slot` short (e.g. `12:00-13:00`) — it is
+   embedded in button callback data (64-byte Telegram limit).
 3. Replace the `EventRegs` header row with `Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at`; delete old data rows.
 4. (Optional) delete the `Events` tab.
 5. `npx vercel --prod` then `npm run set-webhook`.

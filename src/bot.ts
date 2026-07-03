@@ -192,11 +192,11 @@ async function handleMasterclasses(ctx: Context) {
       if (!mc) continue; // unknown ID in MCSchedule (or empty catalog) — skip silently
       const taken = activeRegs(regs, s.date, s.slot, mc.id);
       const mine = taken.some((r) => r.telegramId === String(ctx.from!.id));
+      const cbData = `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`;
+      // Telegram rejects the whole message if any button's callback data exceeds 64 bytes
+      if (Buffer.byteLength(cbData) > 64) continue;
       lines.push(M.mcLine(mc, taken.length, mine));
-      kb.text(
-        `${mine ? "❌" : "📝"} ${mc.title}`,
-        `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`,
-      ).row();
+      kb.text(`${mine ? "❌" : "📝"} ${mc.title}`, cbData).row();
       listed++;
     }
     if (listed === 0) continue;
@@ -241,6 +241,7 @@ bot.command("myevents", handleMyRegs);
 
 bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
+  if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
   const [mcs, { visitors }] = await Promise.all([loadMasterclasses(), loadVisitors()]);
   const mc = mcs.find((m) => m.id === mcId);
   const me = findByTelegramId(visitors, ctx.from.id);
@@ -265,6 +266,7 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
 
 bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
+  if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
   const mcs = await loadMasterclasses();
   const mc = mcs.find((m) => m.id === mcId);
   const ok = await unregister(date, slot, mcId, ctx.from.id);

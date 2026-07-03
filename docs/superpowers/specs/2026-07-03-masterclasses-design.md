@@ -58,7 +58,8 @@ Date       | Slot        | MC IDs
 
 - `Date` — `YYYY-MM-DD` (matches `todayISO()`).
 - `Slot` — free-form label shown to users verbatim (e.g. `12:00-13:00`); also used as
-  part of the registration key, so it must be consistent within a day.
+  part of the registration key, so it must be consistent within a day. Keep it short —
+  it is embedded in button callback data (64-byte Telegram limit).
 - `MC IDs` — comma-separated catalog `№` values (canonical form, e.g. `1`, not `1.`).
   IDs not found in the catalog are silently skipped.
 
@@ -171,8 +172,9 @@ user's active masterclass registrations for today and future dates as
 - `/addresp <mcId> <Ім'я Прізвище>` — add unlinked responsible row (validates the MC ID
   exists in the catalog).
 - `/delresp <mcId> <Ім'я Прізвище>` — clear the row.
-- Both admin- and superadmin-accessible, listed in the scoped command menus
-  (`src/commands.ts`).
+- Both admin- and superadmin-accessible commands, typed by hand — intentionally NOT
+  listed in the scoped slash menus (`src/commands.ts` excludes arg-taking commands
+  from menus by convention).
 
 **Check-in linking:** the existing check-in name-match flow additionally searches
 unlinked `MCResponsible` rows (like it does for leaders) and links all matching rows to
@@ -193,8 +195,9 @@ usage/feedback for `/addresp`/`/delresp`.
 
 ### `src/commands.ts`
 
-Scoped menus updated: `/mc` replaces `/events` where present; `/addresp`, `/delresp`
-added to admin and superadmin menus.
+Scoped menus updated: `/mc` replaces `/events` where present. `/addresp` and `/delresp`
+are intentionally NOT added — they take arguments, and per convention arg-taking
+commands are excluded from the scoped slash menus (typed by hand instead).
 
 ## Registration rules (summary)
 
