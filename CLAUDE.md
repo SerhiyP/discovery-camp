@@ -37,7 +37,7 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `masterclasses.ts` | Masterclass catalog, per-day/slot schedule, and registration CRUD (`EventRegs` tab) |
 | `responsible.ts` | Responsible-person CRUD, search, and linking (mirrors `leaders.ts`) |
 | `messages.ts` | All user-facing Ukrainian strings in one `M` object |
-| `keyboards.ts` | Role-based persistent reply keyboards (`visitorKeyboard`, `leaderKeyboard`, `BTN`) |
+| `keyboards.ts` | Role-composed persistent reply keyboard (`roleKeyboard(opts)`, `BTN`) |
 | `admins.ts` | Admin CRUD and `isAdmin` check (Admins sheet + ADMIN_IDS env var) |
 | `leaders.ts` | Leader CRUD, search, and linking |
 | `commands.ts` | Scoped Telegram command menus per role |
