@@ -1,5 +1,5 @@
 import { Bot, Context, InlineKeyboard } from "grammy";
-import { config } from "./config";
+import { config, todayISO } from "./config";
 import {
   findByTelegramId,
   linkAndCheckIn,
@@ -12,13 +12,13 @@ import {
 } from "./checkin";
 import {
   activeRegs,
-  loadEvents,
-  loadRegistrations,
+  loadMasterclasses,
+  loadMCRegistrations,
+  loadMCSchedule,
   register,
-  todayEvents,
+  todaySlots,
   unregister,
-  upcomingEvents,
-} from "./events";
+} from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
 import { M } from "./messages";
 import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
@@ -138,29 +138,37 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
   await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), kb ? { reply_markup: kb } : {});
 });
 
-// --- events ---
+// --- masterclasses ---
 
-function eventLine(e: { time: string; title: string }): string {
-  return `${e.time} — ${e.title}`;
-}
-
-async function handleEvents(ctx: Context) {
-  const [events, regs] = await Promise.all([loadEvents(), loadRegistrations()]);
-  const today = todayEvents(events);
-  if (today.length === 0) return ctx.reply(M.noEventsToday);
-  const kb = new InlineKeyboard();
-  const lines: string[] = [M.eventsToday, ""];
-  for (const e of today) {
-    const taken = activeRegs(regs, e.id);
-    const mine = taken.some((r) => r.telegramId === String(ctx.from!.id));
-    const free = e.capacity > 0 ? ` (${M.spotsLeft(Math.max(0, e.capacity - taken.length))})` : "";
-    lines.push(`• ${eventLine(e)}${free}${mine ? " ✅" : ""}`);
-    kb.text(
-      mine ? `❌ ${e.title}` : `📝 ${e.title}`,
-      mine ? `unreg:${e.id}` : `reg:${e.id}`,
-    ).row();
+async function handleMasterclasses(ctx: Context) {
+  const [mcs, schedule, regs] = await Promise.all([
+    loadMasterclasses(),
+    loadMCSchedule(),
+    loadMCRegistrations(),
+  ]);
+  const slots = todaySlots(schedule);
+  let sentAny = false;
+  for (const s of slots) {
+    const kb = new InlineKeyboard();
+    const lines: string[] = [M.mcSlotTitle(s.slot), ""];
+    let listed = 0;
+    for (const id of s.mcIds) {
+      const mc = mcs.find((m) => m.id === id);
+      if (!mc) continue; // unknown ID in MCSchedule (or empty catalog) — skip silently
+      const taken = activeRegs(regs, s.date, s.slot, mc.id);
+      const mine = taken.some((r) => r.telegramId === String(ctx.from!.id));
+      lines.push(M.mcLine(mc, taken.length, mine));
+      kb.text(
+        `${mine ? "❌" : "📝"} ${mc.title}`,
+        `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`,
+      ).row();
+      listed++;
+    }
+    if (listed === 0) continue;
+    await ctx.reply(lines.join("\n"), { reply_markup: kb });
+    sentAny = true;
   }
-  return ctx.reply(lines.join("\n"), { reply_markup: kb });
+  if (!sentAny) return ctx.reply(M.noMasterclassesToday);
 }
 
 async function handleSchedule(ctx: Context) {
@@ -174,66 +182,59 @@ async function handleSchedule(ctx: Context) {
     lines.push(...schedule.slots.map((s) => M.scheduleGridLine(s)));
     return ctx.reply(lines.join("\n"));
   }
-
-  // status === "unavailable" → fall back to the events list
-  const events = upcomingEvents(await loadEvents());
-  if (events.length === 0) return ctx.reply(M.noEventsToday);
-  const byDate = new Map<string, string[]>();
-  for (const e of events) {
-    if (!byDate.has(e.date)) byDate.set(e.date, []);
-    byDate.get(e.date)!.push(`  • ${eventLine(e)}`);
-  }
-  const lines = [M.scheduleTitle, ""];
-  for (const [date, items] of byDate) lines.push(date, ...items, "");
-  return ctx.reply(lines.join("\n"));
+  return ctx.reply(M.scheduleUnavailable);
 }
 
-async function handleMyEvents(ctx: Context) {
-  const [events, regs] = await Promise.all([loadEvents(), loadRegistrations()]);
+async function handleMyRegs(ctx: Context) {
+  const [mcs, regs] = await Promise.all([loadMasterclasses(), loadMCRegistrations()]);
+  const today = todayISO();
   const mine = regs.filter(
-    (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled,
+    (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled && r.date >= today,
   );
-  if (mine.length === 0) return ctx.reply(M.myEventsEmpty);
-  const lines = [M.myEventsTitle, ""];
+  if (mine.length === 0) return ctx.reply(M.myRegsEmpty);
+  const lines = [M.myRegsTitle, ""];
   for (const r of mine) {
-    const e = events.find((ev) => ev.id === r.eventId);
-    if (e) lines.push(`• ${e.date} ${eventLine(e)}`);
+    const mc = mcs.find((m) => m.id === r.mcId);
+    if (mc) lines.push(`• ${r.date}, ${r.slot} — ${mc.title} (${mc.place})`);
   }
   return ctx.reply(lines.join("\n"));
 }
 
-bot.command("events", handleEvents);
+bot.command("mc", handleMasterclasses);
 bot.command("schedule", handleSchedule);
-bot.command("myevents", handleMyEvents);
+bot.command("myevents", handleMyRegs);
 
-bot.callbackQuery(/^reg:(.+)$/, async (ctx) => {
-  const eventId = ctx.match[1];
-  const [events, { visitors }] = await Promise.all([loadEvents(), loadVisitors()]);
-  const event = events.find((e) => e.id === eventId);
+bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+  const [, date, slot, mcId] = ctx.match;
+  const [mcs, { visitors }] = await Promise.all([loadMasterclasses(), loadVisitors()]);
+  const mc = mcs.find((m) => m.id === mcId);
   const me = findByTelegramId(visitors, ctx.from.id);
-  if (!event) return ctx.answerCallbackQuery();
+  if (!mc) return ctx.answerCallbackQuery();
   if (!me) {
     await ctx.answerCallbackQuery();
     return ctx.reply(M.mustCheckInFirst);
   }
-  const result = await register(eventId, event.capacity, ctx.from.id, me.name);
+  const result = await register(date, slot, mcId, mc.capacity, ctx.from.id, me.name);
   await ctx.answerCallbackQuery(
     result === "ok"
-      ? M.registered(event.title)
+      ? M.mcRegistered(mc.title, slot)
       : result === "full"
-        ? M.eventFull
-        : M.alreadyRegistered,
+        ? M.mcFull
+        : result === "already"
+          ? M.mcAlready
+          : M.mcSlotTaken,
   );
-  if (result === "ok") await ctx.reply(M.registered(event.title));
+  if (result === "ok") await ctx.reply(M.mcRegistered(mc.title, slot));
+  if (result === "slot_taken") await ctx.reply(M.mcSlotTaken);
 });
 
-bot.callbackQuery(/^unreg:(.+)$/, async (ctx) => {
-  const eventId = ctx.match[1];
-  const events = await loadEvents();
-  const event = events.find((e) => e.id === eventId);
-  const ok = await unregister(eventId, ctx.from.id);
+bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+  const [, date, slot, mcId] = ctx.match;
+  const mcs = await loadMasterclasses();
+  const mc = mcs.find((m) => m.id === mcId);
+  const ok = await unregister(date, slot, mcId, ctx.from.id);
   await ctx.answerCallbackQuery();
-  if (ok && event) await ctx.reply(M.unregistered(event.title));
+  if (ok && mc) await ctx.reply(M.mcUnregistered(mc.title, slot));
 });
 
 // --- admin helpers ---
@@ -451,9 +452,9 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
 
 // --- keyboard button handlers (must be before message:text catch-all) ---
 
-bot.hears(BTN.masterclasses, handleEvents);
+bot.hears(BTN.masterclasses, handleMasterclasses);
 bot.hears(BTN.schedule, handleSchedule);
-bot.hears(BTN.myRegs, handleMyEvents);
+bot.hears(BTN.myRegs, handleMyRegs);
 bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
 bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
 

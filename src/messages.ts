@@ -12,25 +12,33 @@ export const M = {
   checkedIn: (name: string, room?: string) =>
     `Готово, ${name}! Ви відмічені ✅${room ? `\nВаша кімната: ${room}` : ""}\nГарного табору! 🎉`,
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
-  noEventsToday: "На сьогодні подій немає.",
-  eventsToday: "Події на сьогодні:",
-  scheduleTitle: "Розклад подій:",
+  noMasterclassesToday: "Сьогодні майстер-класів немає.",
+  mcSlotTitle: (slot: string) => `🎨 Майстер-класи ${slot}:`,
+  mcLine: (
+    mc: { title: string; place: string; capacity: number },
+    taken: number,
+    mine: boolean,
+  ) =>
+    `• ${mc.title} (${mc.place})${
+      mc.capacity > 0 ? ` — ${taken}/${mc.capacity}` : ""
+    }${mine ? " ✅" : ""}`,
+  mcRegistered: (title: string, slot: string) =>
+    `Ви зареєстровані на «${title}» (${slot}) ✅`,
+  mcUnregistered: (title: string, slot: string) =>
+    `Реєстрацію на «${title}» (${slot}) скасовано.`,
+  mcFull: "На жаль, місць більше немає 😔",
+  mcAlready: "Ви вже зареєстровані на цей майстер-клас.",
+  mcSlotTaken:
+    "У цей час ви вже зареєстровані на інший майстер-клас. Спершу скасуйте ту реєстрацію.",
+  myRegsTitle: "Ваші реєстрації:",
+  myRegsEmpty: "Ви поки не зареєстровані на жодний майстер-клас.",
+  scheduleUnavailable: "Розклад тимчасово недоступний.",
   scheduleGridTitle: (dayLabel: string) => `📅 Розклад — ${dayLabel}`,
   scheduleGridLine: (slot: { time: string; activity: string; isCurrent: boolean }) =>
     `${slot.isCurrent ? "▶ " : ""}${slot.time} ${slot.activity}`,
   scheduleNotStarted: "Табір ще не розпочався.\nОсь розклад першого дня:",
   scheduleCampFinished: "Табір завершено.\nДякуємо, що були з нами! 🎉",
-  registered: (title: string) => `Ви зареєстровані на «${title}» ✅`,
-  unregistered: (title: string) => `Реєстрацію на «${title}» скасовано.`,
-  eventFull: "На жаль, місць більше немає 😔",
-  alreadyRegistered: "Ви вже зареєстровані на цю подію.",
-  myEventsTitle: "Ваші реєстрації:",
-  myEventsEmpty: "Ви поки не зареєстровані на жодну подію. Подивіться /events",
   mustCheckInFirst: "Спершу відмітьтесь: напишіть своє прізвище та ім'я.",
-  morningDigest: "Доброго ранку! ☀️ Сьогодні в таборі:",
-  registerButton: "Зареєструватися",
-  unregisterButton: "Скасувати реєстрацію",
-  spotsLeft: (n: number) => `вільних місць: ${n}`,
 
   // /myid
   yourId: (id: number) => `Ваш Telegram ID: <code>${id}</code>`,
