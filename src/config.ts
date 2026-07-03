@@ -26,8 +26,9 @@ export const config = {
   teamHeader: process.env.TEAM_HEADER ?? "",
   roomHeader: process.env.ROOM_HEADER ?? "Кімната",
 
-  eventsTab: "Events",
   registrationsTab: "EventRegs",
+  mcScheduleTab: "MCSchedule",
+  responsibleTab: "MCResponsible",
   adminsTab: "Admins",
   leadersTab: "Leaders",
   videosTab: "Videos",

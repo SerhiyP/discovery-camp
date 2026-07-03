@@ -1,5 +1,5 @@
 import { Bot, Context, InlineKeyboard } from "grammy";
-import { config } from "./config";
+import { config, todayISO } from "./config";
 import {
   findByTelegramId,
   linkAndCheckIn,
@@ -12,13 +12,14 @@ import {
 } from "./checkin";
 import {
   activeRegs,
-  loadEvents,
-  loadRegistrations,
+  loadMasterclasses,
+  loadMCRegistrations,
+  loadMCSchedule,
+  Masterclass,
   register,
-  todayEvents,
+  todaySlots,
   unregister,
-  upcomingEvents,
-} from "./events";
+} from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
 import { M } from "./messages";
 import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
@@ -32,18 +33,29 @@ import {
   setLeaderTelegramId,
 } from "./leaders";
 import { initCommandMenus, setCommandsForUser } from "./commands";
-import { BTN, leaderKeyboard, visitorKeyboard } from "./keyboards";
+import { BTN, roleKeyboard } from "./keyboards";
+import {
+  addResponsible,
+  findResponsibleByTelegramId,
+  linkResponsibleRows,
+  loadResponsible,
+  removeResponsible,
+  searchResponsibleByName,
+} from "./responsible";
 
 export const bot = new Bot(config.botToken);
 
 const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
 async function keyboardForUser(telegramId: number): Promise<import("grammy").Keyboard | undefined> {
-  const { leaders } = await loadLeaders();
+  const [{ leaders }, { responsible }] = await Promise.all([loadLeaders(), loadResponsible()]);
   const isLeader = findLeadersByTelegramId(leaders, telegramId).length > 0;
-  if (isLeader) return leaderKeyboard();
+  const isResponsible = findResponsibleByTelegramId(responsible, telegramId).length > 0;
+  if (isLeader || isResponsible) {
+    return roleKeyboard({ leader: isLeader, responsible: isResponsible });
+  }
   const { visitors } = await loadVisitors();
-  if (findByTelegramId(visitors, telegramId)) return visitorKeyboard();
+  if (findByTelegramId(visitors, telegramId)) return roleKeyboard();
   return undefined;
 }
 
@@ -130,32 +142,68 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
     ? "admin"
     : "leader";
   await setCommandsForUser(bot, ctx.from.id, role);
-  await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), { reply_markup: leaderKeyboard() });
+  const kb = await keyboardForUser(ctx.from.id);
+  await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), kb ? { reply_markup: kb } : {});
 });
 
-// --- events ---
+bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
+  const rowIndex = Number(ctx.match[1]);
+  const sheet = await loadResponsible();
 
-function eventLine(e: { time: string; title: string }): string {
-  return `${e.time} — ${e.title}`;
-}
-
-async function handleEvents(ctx: Context) {
-  const [events, regs] = await Promise.all([loadEvents(), loadRegistrations()]);
-  const today = todayEvents(events);
-  if (today.length === 0) return ctx.reply(M.noEventsToday);
-  const kb = new InlineKeyboard();
-  const lines: string[] = [M.eventsToday, ""];
-  for (const e of today) {
-    const taken = activeRegs(regs, e.id);
-    const mine = taken.some((r) => r.telegramId === String(ctx.from!.id));
-    const free = e.capacity > 0 ? ` (${M.spotsLeft(Math.max(0, e.capacity - taken.length))})` : "";
-    lines.push(`• ${eventLine(e)}${free}${mine ? " ✅" : ""}`);
-    kb.text(
-      mine ? `❌ ${e.title}` : `📝 ${e.title}`,
-      mine ? `unreg:${e.id}` : `reg:${e.id}`,
-    ).row();
+  const row = sheet.responsible.find((r) => r.rowIndex === rowIndex);
+  if (!row) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.respNotFound);
   }
-  return ctx.reply(lines.join("\n"), { reply_markup: kb });
+  if (row.telegramId && row.telegramId !== String(ctx.from.id)) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.rowTaken);
+  }
+
+  // Links every unlinked row with this name — one person may run several MCs.
+  const linked = await linkResponsibleRows(sheet, row.name, ctx.from.id);
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage();
+
+  const mcs = await loadMasterclasses();
+  const titles = linked
+    .map((r) => mcs.find((m) => m.id === r.mcId)?.title ?? `МК ${r.mcId}`)
+    .join(", ");
+  const kb = await keyboardForUser(ctx.from.id);
+  await ctx.reply(M.respCheckedIn(row.name, titles), kb ? { reply_markup: kb } : {});
+});
+
+// --- masterclasses ---
+
+async function handleMasterclasses(ctx: Context) {
+  const [mcs, schedule, regs] = await Promise.all([
+    loadMasterclasses(),
+    loadMCSchedule(),
+    loadMCRegistrations(),
+  ]);
+  const slots = todaySlots(schedule);
+  let sentAny = false;
+  for (const s of slots) {
+    const kb = new InlineKeyboard();
+    const lines: string[] = [M.mcSlotTitle(s.slot), ""];
+    let listed = 0;
+    for (const id of s.mcIds) {
+      const mc = mcs.find((m) => m.id === id);
+      if (!mc) continue; // unknown ID in MCSchedule (or empty catalog) — skip silently
+      const taken = activeRegs(regs, s.date, s.slot, mc.id);
+      const mine = taken.some((r) => r.telegramId === String(ctx.from!.id));
+      const cbData = `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`;
+      // Telegram rejects the whole message if any button's callback data exceeds 64 bytes
+      if (Buffer.byteLength(cbData) > 64) continue;
+      lines.push(M.mcLine(mc, taken.length, mine));
+      kb.text(`${mine ? "❌" : "📝"} ${mc.title}`, cbData).row();
+      listed++;
+    }
+    if (listed === 0) continue;
+    await ctx.reply(lines.join("\n"), { reply_markup: kb });
+    sentAny = true;
+  }
+  if (!sentAny) return ctx.reply(M.noMasterclassesToday);
 }
 
 async function handleSchedule(ctx: Context) {
@@ -169,66 +217,61 @@ async function handleSchedule(ctx: Context) {
     lines.push(...schedule.slots.map((s) => M.scheduleGridLine(s)));
     return ctx.reply(lines.join("\n"));
   }
-
-  // status === "unavailable" → fall back to the events list
-  const events = upcomingEvents(await loadEvents());
-  if (events.length === 0) return ctx.reply(M.noEventsToday);
-  const byDate = new Map<string, string[]>();
-  for (const e of events) {
-    if (!byDate.has(e.date)) byDate.set(e.date, []);
-    byDate.get(e.date)!.push(`  • ${eventLine(e)}`);
-  }
-  const lines = [M.scheduleTitle, ""];
-  for (const [date, items] of byDate) lines.push(date, ...items, "");
-  return ctx.reply(lines.join("\n"));
+  return ctx.reply(M.scheduleUnavailable);
 }
 
-async function handleMyEvents(ctx: Context) {
-  const [events, regs] = await Promise.all([loadEvents(), loadRegistrations()]);
+async function handleMyRegs(ctx: Context) {
+  const [mcs, regs] = await Promise.all([loadMasterclasses(), loadMCRegistrations()]);
+  const today = todayISO();
   const mine = regs.filter(
-    (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled,
+    (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled && r.date >= today,
   );
-  if (mine.length === 0) return ctx.reply(M.myEventsEmpty);
-  const lines = [M.myEventsTitle, ""];
+  if (mine.length === 0) return ctx.reply(M.myRegsEmpty);
+  const lines = [M.myRegsTitle, ""];
   for (const r of mine) {
-    const e = events.find((ev) => ev.id === r.eventId);
-    if (e) lines.push(`• ${e.date} ${eventLine(e)}`);
+    const mc = mcs.find((m) => m.id === r.mcId);
+    if (mc) lines.push(`• ${r.date}, ${r.slot} — ${mc.title} (${mc.place})`);
   }
   return ctx.reply(lines.join("\n"));
 }
 
-bot.command("events", handleEvents);
+bot.command("mc", handleMasterclasses);
 bot.command("schedule", handleSchedule);
-bot.command("myevents", handleMyEvents);
+bot.command("myevents", handleMyRegs);
 
-bot.callbackQuery(/^reg:(.+)$/, async (ctx) => {
-  const eventId = ctx.match[1];
-  const [events, { visitors }] = await Promise.all([loadEvents(), loadVisitors()]);
-  const event = events.find((e) => e.id === eventId);
+bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+  const [, date, slot, mcId] = ctx.match;
+  if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
+  const [mcs, { visitors }] = await Promise.all([loadMasterclasses(), loadVisitors()]);
+  const mc = mcs.find((m) => m.id === mcId);
   const me = findByTelegramId(visitors, ctx.from.id);
-  if (!event) return ctx.answerCallbackQuery();
+  if (!mc) return ctx.answerCallbackQuery();
   if (!me) {
     await ctx.answerCallbackQuery();
     return ctx.reply(M.mustCheckInFirst);
   }
-  const result = await register(eventId, event.capacity, ctx.from.id, me.name);
+  const result = await register(date, slot, mcId, mc.capacity, ctx.from.id, me.name);
   await ctx.answerCallbackQuery(
     result === "ok"
-      ? M.registered(event.title)
+      ? M.mcRegistered(mc.title, slot)
       : result === "full"
-        ? M.eventFull
-        : M.alreadyRegistered,
+        ? M.mcFull
+        : result === "already"
+          ? M.mcAlready
+          : M.mcSlotTaken,
   );
-  if (result === "ok") await ctx.reply(M.registered(event.title));
+  if (result === "ok") await ctx.reply(M.mcRegistered(mc.title, slot));
+  if (result === "slot_taken") await ctx.reply(M.mcSlotTaken);
 });
 
-bot.callbackQuery(/^unreg:(.+)$/, async (ctx) => {
-  const eventId = ctx.match[1];
-  const events = await loadEvents();
-  const event = events.find((e) => e.id === eventId);
-  const ok = await unregister(eventId, ctx.from.id);
+bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+  const [, date, slot, mcId] = ctx.match;
+  if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
+  const mcs = await loadMasterclasses();
+  const mc = mcs.find((m) => m.id === mcId);
+  const ok = await unregister(date, slot, mcId, ctx.from.id);
   await ctx.answerCallbackQuery();
-  if (ok && event) await ctx.reply(M.unregistered(event.title));
+  if (ok && mc) await ctx.reply(M.mcUnregistered(mc.title, slot));
 });
 
 // --- admin helpers ---
@@ -328,6 +371,35 @@ bot.command("listleaders", async (ctx) => {
   const lines = [M.leadersListTitle, ""];
   for (const l of leaders) lines.push(M.leaderListLine(l.team, l.name, !!l.telegramId));
   return ctx.reply(lines.join("\n"));
+});
+
+bot.command("addresp", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.addRespUsage);
+  const [mcId, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const mcs = await loadMasterclasses();
+  const mc = mcs.find((m) => m.id === mcId);
+  if (!mc) return ctx.reply(M.mcNotFoundAdmin(mcId));
+  const result = await addResponsible(mcId, name);
+  if (result === "duplicate") return ctx.reply(M.respDuplicate(name, mc.title));
+  return ctx.reply(M.respAdded(name, mc.title));
+});
+
+bot.command("delresp", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const parts = ctx.match.trim().split(/\s+/);
+  if (parts.length < 2) return ctx.reply(M.delRespUsage);
+  const [mcId, ...nameParts] = parts;
+  const name = nameParts.join(" ");
+  const ok = await removeResponsible(mcId, name);
+  if (!ok) return ctx.reply(M.respNotFoundAdmin(name, mcId));
+  const mcs = await loadMasterclasses();
+  const title = mcs.find((m) => m.id === mcId)?.title ?? `МК ${mcId}`;
+  return ctx.reply(M.respRemoved(name, title));
 });
 
 // --- superadmin commands ---
@@ -444,28 +516,128 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
   return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
 });
 
+// --- responsible tools ---
+
+interface MCOccurrence {
+  date: string;
+  slot: string;
+  mc: Masterclass;
+}
+
+/** Today's occurrences of the user's masterclasses, in deterministic sheet order.
+ *  Returns null if the user is not a responsible person. */
+async function myOccurrencesToday(telegramId: number): Promise<MCOccurrence[] | null> {
+  const { responsible } = await loadResponsible();
+  const mine = findResponsibleByTelegramId(responsible, telegramId);
+  if (mine.length === 0) return null;
+  const myIds = [...new Set(mine.map((r) => r.mcId))];
+  const [mcs, schedule] = await Promise.all([loadMasterclasses(), loadMCSchedule()]);
+  const occ: MCOccurrence[] = [];
+  for (const s of todaySlots(schedule)) {
+    for (const id of s.mcIds) {
+      if (!myIds.includes(id)) continue;
+      const mc = mcs.find((m) => m.id === id);
+      if (mc) occ.push({ date: s.date, slot: s.slot, mc });
+    }
+  }
+  return occ;
+}
+
+async function handleMcAttendees(ctx: Context) {
+  const occ = await myOccurrencesToday(ctx.from!.id);
+  if (occ === null) return ctx.reply(M.notResponsible);
+  if (occ.length === 0) return ctx.reply(M.noMyMcToday);
+  const regs = await loadMCRegistrations();
+  const lines: string[] = [];
+  for (const o of occ) {
+    const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+    lines.push(M.mcAttendeesHeader(o.mc.title, o.slot, o.mc.place, taken.length, o.mc.capacity));
+    if (taken.length === 0) lines.push(M.mcNoAttendees);
+    for (const r of taken) lines.push(`• ${r.name}`);
+    lines.push("");
+  }
+  return ctx.reply(lines.join("\n").trimEnd());
+}
+
+async function notifyOccurrence(ctx: Context, o: MCOccurrence, text: string) {
+  const regs = await loadMCRegistrations();
+  const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+  const ids = [...new Set(taken.map((r) => r.telegramId))];
+  let sent = 0;
+  for (const id of ids) {
+    try {
+      await bot.api.sendMessage(id, text);
+      sent++;
+    } catch {
+      // user blocked the bot or never started it
+    }
+  }
+  return ctx.reply(M.mcNotifySent(sent, ids.length, o.mc.title, o.slot));
+}
+
+bot.command("notifymc", async (ctx) => {
+  const text = ctx.match.trim();
+  if (!text) return ctx.reply(M.mcNotifyNoText);
+  const occ = await myOccurrencesToday(ctx.from!.id);
+  if (occ === null) return ctx.reply(M.notResponsible);
+  if (occ.length === 0) return ctx.reply(M.noMyMcToday);
+  if (occ.length === 1) return notifyOccurrence(ctx, occ[0], text);
+  const kb = new InlineKeyboard();
+  occ.forEach((o, i) => kb.text(`${o.mc.title} (${o.slot})`, `mn:${i}`).row());
+  return ctx.reply(M.mcNotifyChoose(text), { reply_markup: kb });
+});
+
+bot.callbackQuery(/^mn:(\d+)$/, async (ctx) => {
+  const idx = Number(ctx.match[1]);
+  // The notify text is embedded in the picker message («…»), like the renameteam flow.
+  const msgText = ctx.callbackQuery.message?.text ?? "";
+  const textMatch = msgText.match(/«([\s\S]+)»/);
+  if (!textMatch) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.mcNotifyNoText);
+  }
+  const occ = await myOccurrencesToday(ctx.from.id);
+  const o = occ?.[idx];
+  if (!o) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.noMyMcToday);
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage();
+  return notifyOccurrence(ctx, o, textMatch[1]);
+});
+
 // --- keyboard button handlers (must be before message:text catch-all) ---
 
-bot.hears(BTN.events, handleEvents);
+bot.hears(BTN.masterclasses, handleMasterclasses);
 bot.hears(BTN.schedule, handleSchedule);
-bot.hears(BTN.myEvents, handleMyEvents);
+bot.hears(BTN.myRegs, handleMyRegs);
 bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
 bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
+bot.hears(BTN.mcAttendees, handleMcAttendees);
+bot.hears(BTN.mcNotify, (ctx) => ctx.reply(M.mcNotifyHint));
 
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
-  const [sheet, leaderSheet] = await Promise.all([loadVisitors(), loadLeaders()]);
+  const [sheet, leaderSheet, respSheet] = await Promise.all([
+    loadVisitors(),
+    loadLeaders(),
+    loadResponsible(),
+  ]);
 
   const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
   const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
 
-  // Always search for unlinked leader entries — a visitor can also be a leader.
+  // Always search unlinked leader/responsible entries — a visitor can also hold those roles.
   const leaderMatches = searchLeaderByName(leaderSheet.leaders, ctx.message.text);
+  const respRows = searchResponsibleByName(respSheet.responsible, ctx.message.text);
+  // One button per distinct person: the link_resp handler links all their rows at once.
+  const respMatches = [...new Map(respRows.map((r) => [r.name.toLowerCase(), r])).values()];
   // Only search visitors if not yet linked as one.
   const visitorMatches = meVisitor ? [] : searchByName(sheet.visitors, ctx.message.text);
 
-  if (visitorMatches.length === 0 && leaderMatches.length === 0) {
+  if (visitorMatches.length === 0 && leaderMatches.length === 0 && respMatches.length === 0) {
     if (meLeader.length > 0) return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
     if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
     return ctx.reply(M.notFound);
@@ -473,20 +645,27 @@ bot.on("message:text", async (ctx) => {
 
   const kb = new InlineKeyboard();
 
-  if (visitorMatches.length === 1 && leaderMatches.length === 0) {
+  if (visitorMatches.length === 1 && leaderMatches.length === 0 && respMatches.length === 0) {
     kb.text(visitorMatches[0].name, `link:${visitorMatches[0].rowIndex}`).row();
     return ctx.reply(M.confirmOne, { reply_markup: kb });
   }
 
-  if (leaderMatches.length === 1 && visitorMatches.length === 0) {
+  if (leaderMatches.length === 1 && visitorMatches.length === 0 && respMatches.length === 0) {
     const l = leaderMatches[0];
     kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
     return ctx.reply(M.confirmLeader(l.name, l.team), { reply_markup: kb });
   }
 
+  if (respMatches.length === 1 && visitorMatches.length === 0 && leaderMatches.length === 0) {
+    const r = respMatches[0];
+    kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
+    return ctx.reply(M.confirmResp(r.name), { reply_markup: kb });
+  }
+
   for (const v of visitorMatches) kb.text(v.name, `link:${v.rowIndex}`).row();
   for (const l of leaderMatches)
     kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+  for (const r of respMatches) kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
 
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });

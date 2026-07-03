@@ -34,9 +34,10 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `config.ts` | Env-var loading with required() guard; `todayISO()` and `nowStamp()` helpers (Kyiv timezone) |
 | `sheets.ts` | Thin Google Sheets API wrapper: `getRows`, `updateCell`, `appendRow`, `headerIndex` |
 | `checkin.ts` | Visitor search, name normalization, row-linking, check-in write, team video lookup |
-| `events.ts` | Event/registration CRUD against the `Events` and `EventRegs` tabs |
+| `masterclasses.ts` | Masterclass catalog, per-day/slot schedule, and registration CRUD (`EventRegs` tab) |
+| `responsible.ts` | Responsible-person CRUD, search, and linking (mirrors `leaders.ts`) |
 | `messages.ts` | All user-facing Ukrainian strings in one `M` object |
-| `keyboards.ts` | Role-based persistent reply keyboards (`visitorKeyboard`, `leaderKeyboard`, `BTN`) |
+| `keyboards.ts` | Role-composed persistent reply keyboard (`roleKeyboard(opts)`, `BTN`) |
 | `admins.ts` | Admin CRUD and `isAdmin` check (Admins sheet + ADMIN_IDS env var) |
 | `leaders.ts` | Leader CRUD, search, and linking |
 | `commands.ts` | Scoped Telegram command menus per role |
@@ -46,19 +47,22 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 
 - **`RESPONSES_TAB`** (default: `Form Responses 1`) — Google Form responses; bot adds `Checked in` and `Telegram ID` columns to the right. Also reads `Команда` (team ID) and `Кімната` (room number) columns.
-- **`Events`** — `ID | Date | Time | Title | Capacity` (`Capacity=0` = unlimited, `Date` as `YYYY-MM-DD`).
-- **`EventRegs`** — `Event ID | Telegram ID | Name | Registered at | Cancelled at` (bot-managed).
+- **Masterclass catalog** — read-only from the grid spreadsheet (`GRID_SHEET_ID`), tab `5.Майстер-класи 2026`: columns `№ | Назва | Відповідальний | Місце проведення | … | Кількість учасників`. The header row is auto-detected (first row containing `Назва`); `№` like `1.` → ID `1`; capacity `без обмежень`/blank = unlimited; non-numeric-`№` rows (tournament tables) are skipped.
+- **`MCSchedule`** — `Date | Slot | MC IDs` (date `YYYY-MM-DD`, slot shown verbatim, MC IDs comma-separated catalog `№` values). Keep `Slot` short (e.g. `12:00-13:00`) — it is embedded in button callback data (64-byte Telegram limit).
+- **`EventRegs`** — `Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at` (bot-managed masterclass registrations; one active registration per user per date+slot).
+- **`MCResponsible`** — `MC ID | Name | Telegram ID | Added at` (bot-managed via `/addresp`; linked at check-in by name like leaders).
 - **`Videos`** — `ID | Team | File ID | Type` for per-team leader videos. `ID` is a permanent numeric key; `Team` is a display name that can be renamed. `Type` is `video_note` or `video`.
 - **`Admins`** — `Telegram ID | Name` (bot-managed via `/addadmin`).
 - **`Leaders`** — `Team | Name | Telegram ID | Linked at` (bot-managed via `/addleader`). The `Team` column stores the **numeric ID** matching the `Videos.ID` column.
 
 ### Role system
 
-Three tiers, checked in order:
+Four tiers, checked in order:
 
 1. **Superadmin** — Telegram IDs in `ADMIN_IDS` env var. Full access.
 2. **Admin** — rows in the `Admins` sheet. Can manage leaders and broadcast.
 3. **Leader** — rows in the `Leaders` sheet. Can notify team, rename team, set team video.
+4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees. Independent of the leader role; a person can hold both.
 
 ### Reply keyboards
 
@@ -66,8 +70,9 @@ Shown automatically after check-in/link; also restored on `/start` for linked us
 
 | Role | Buttons |
 |---|---|
-| Visitor | `📅 Події сьогодні` · `🗓 Розклад` · `📋 Мої реєстрації` |
+| Visitor | `🎨 Майстер-класи` · `🗓 Розклад` · `📋 Мої реєстрації` |
 | Leader | Visitor buttons + `📢 Сповістити команду` · `✏️ Перейменувати команду` |
+| Responsible | Visitor buttons + `👥 Учасники МК` · `📣 Сповістити учасників МК` (stacks with leader rows) |
 
 The default Telegram command menu (`Меню` button) is cleared for regular users — admins/superadmins keep scoped command menus.
 

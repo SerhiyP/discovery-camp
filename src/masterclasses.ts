@@ -1,0 +1,180 @@
+import { config, nowStamp, todayISO } from "./config";
+import {
+  appendRow,
+  getRows,
+  getRowsFromSpreadsheet,
+  headerIndex,
+  updateCell,
+} from "./sheets";
+
+// The catalog lives in the read-only grid spreadsheet (GRID_SHEET_ID), maintained by
+// the organizers. Layout: a banner row, then a header row ("№ | Назва | …"), then the
+// catalog rows; tournament tables follow below and must be ignored.
+const MC_CATALOG_TAB = "5.Майстер-класи 2026";
+
+export interface Masterclass {
+  id: string;
+  title: string;
+  responsible: string; // display text only; linking lives in MCResponsible
+  place: string;
+  capacity: number; // 0 = unlimited
+}
+
+export interface SlotSchedule {
+  date: string; // YYYY-MM-DD
+  slot: string; // shown verbatim, e.g. "12:00-13:00"; part of the registration key
+  mcIds: string[];
+}
+
+export interface MCRegistration {
+  rowIndex: number;
+  date: string;
+  slot: string;
+  mcId: string;
+  telegramId: string;
+  name: string;
+  cancelled: boolean;
+}
+
+export async function loadMasterclasses(): Promise<Masterclass[]> {
+  if (!config.gridSheetId) return [];
+  const rows = await getRowsFromSpreadsheet(config.gridSheetId, MC_CATALOG_TAB);
+  // The header row is not the first row — find the row that contains "Назва".
+  const headerRowIdx = rows.findIndex((r) => headerIndex(r, "Назва") !== -1);
+  if (headerRowIdx === -1) return [];
+  const h = rows[headerRowIdx];
+  const c = {
+    id: headerIndex(h, "№"),
+    title: headerIndex(h, "Назва"),
+    responsible: headerIndex(h, "Відповідальний"),
+    place: headerIndex(h, "Місце проведення"),
+    capacity: headerIndex(h, "Кількість учасників"),
+  };
+  const mcs: Masterclass[] = [];
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    // "№" values look like "1." — canonical ID is "1". Rows without a numeric "№"
+    // (blank separators, tournament tables below the catalog) are skipped.
+    const idMatch = (row[c.id] ?? "").trim().match(/^(\d+)\.?$/);
+    const title = (row[c.title] ?? "").trim();
+    if (!idMatch || !title) continue;
+    const capRaw = (row[c.capacity] ?? "").trim().toLowerCase();
+    mcs.push({
+      id: idMatch[1],
+      title,
+      responsible: (row[c.responsible] ?? "").trim(),
+      place: (row[c.place] ?? "").trim(),
+      capacity: capRaw === "без обмежень" ? 0 : Number(capRaw) || 0,
+    });
+  }
+  return mcs;
+}
+
+export async function loadMCSchedule(): Promise<SlotSchedule[]> {
+  const rows = await getRows(config.mcScheduleTab);
+  if (rows.length === 0) return [];
+  const h = rows[0];
+  const c = {
+    date: headerIndex(h, "Date"),
+    slot: headerIndex(h, "Slot"),
+    mcIds: headerIndex(h, "MC IDs"),
+  };
+  const slots: SlotSchedule[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const date = (row[c.date] ?? "").trim();
+    const slot = (row[c.slot] ?? "").trim();
+    const mcIds = (row[c.mcIds] ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!date || !slot || mcIds.length === 0) continue;
+    slots.push({ date, slot, mcIds });
+  }
+  return slots;
+}
+
+export function todaySlots(schedule: SlotSchedule[]): SlotSchedule[] {
+  const today = todayISO();
+  return schedule.filter((s) => s.date === today);
+}
+
+// EventRegs columns: Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at
+export async function loadMCRegistrations(): Promise<MCRegistration[]> {
+  const rows = await getRows(config.registrationsTab);
+  const regs: MCRegistration[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const [date, slot, mcId, telegramId, name, , cancelled] = rows[i];
+    if (!date || !slot || !mcId || !telegramId) continue;
+    regs.push({
+      rowIndex: i,
+      date: date.trim(),
+      slot: slot.trim(),
+      mcId: mcId.trim(),
+      telegramId: telegramId.trim(),
+      name: (name ?? "").trim(),
+      cancelled: (cancelled ?? "").trim() !== "",
+    });
+  }
+  return regs;
+}
+
+export function activeRegs(
+  regs: MCRegistration[],
+  date: string,
+  slot: string,
+  mcId: string,
+): MCRegistration[] {
+  return regs.filter(
+    (r) => r.date === date && r.slot === slot && r.mcId === mcId && !r.cancelled,
+  );
+}
+
+export type RegisterResult = "ok" | "full" | "already" | "slot_taken";
+
+export async function register(
+  date: string,
+  slot: string,
+  mcId: string,
+  capacity: number,
+  telegramId: number,
+  name: string,
+): Promise<RegisterResult> {
+  const regs = await loadMCRegistrations();
+  const slotMine = regs.find(
+    (r) =>
+      r.date === date &&
+      r.slot === slot &&
+      r.telegramId === String(telegramId) &&
+      !r.cancelled,
+  );
+  if (slotMine) return slotMine.mcId === mcId ? "already" : "slot_taken";
+  const active = activeRegs(regs, date, slot, mcId);
+  if (capacity > 0 && active.length >= capacity) return "full";
+  await appendRow(config.registrationsTab, [
+    date,
+    slot,
+    mcId,
+    String(telegramId),
+    name,
+    nowStamp(),
+    "",
+  ]);
+  return "ok";
+}
+
+export async function unregister(
+  date: string,
+  slot: string,
+  mcId: string,
+  telegramId: number,
+): Promise<boolean> {
+  const regs = await loadMCRegistrations();
+  const mine = activeRegs(regs, date, slot, mcId).find(
+    (r) => r.telegramId === String(telegramId),
+  );
+  if (!mine) return false;
+  // column G = "Cancelled at"
+  await updateCell(config.registrationsTab, mine.rowIndex, 6, nowStamp());
+  return true;
+}

@@ -12,25 +12,33 @@ export const M = {
   checkedIn: (name: string, room?: string) =>
     `Готово, ${name}! Ви відмічені ✅${room ? `\nВаша кімната: ${room}` : ""}\nГарного табору! 🎉`,
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
-  noEventsToday: "На сьогодні подій немає.",
-  eventsToday: "Події на сьогодні:",
-  scheduleTitle: "Розклад подій:",
+  noMasterclassesToday: "Сьогодні майстер-класів немає.",
+  mcSlotTitle: (slot: string) => `🎨 Майстер-класи ${slot}:`,
+  mcLine: (
+    mc: { title: string; place: string; capacity: number },
+    taken: number,
+    mine: boolean,
+  ) =>
+    `• ${mc.title} (${mc.place})${
+      mc.capacity > 0 ? ` — ${taken}/${mc.capacity}` : ""
+    }${mine ? " ✅" : ""}`,
+  mcRegistered: (title: string, slot: string) =>
+    `Ви зареєстровані на «${title}» (${slot}) ✅`,
+  mcUnregistered: (title: string, slot: string) =>
+    `Реєстрацію на «${title}» (${slot}) скасовано.`,
+  mcFull: "На жаль, місць більше немає 😔",
+  mcAlready: "Ви вже зареєстровані на цей майстер-клас.",
+  mcSlotTaken:
+    "У цей час ви вже зареєстровані на інший майстер-клас. Спершу скасуйте ту реєстрацію.",
+  myRegsTitle: "Ваші реєстрації:",
+  myRegsEmpty: "Ви поки не зареєстровані на жодний майстер-клас.",
+  scheduleUnavailable: "Розклад тимчасово недоступний.",
   scheduleGridTitle: (dayLabel: string) => `📅 Розклад — ${dayLabel}`,
   scheduleGridLine: (slot: { time: string; activity: string; isCurrent: boolean }) =>
     `${slot.isCurrent ? "▶ " : ""}${slot.time} ${slot.activity}`,
   scheduleNotStarted: "Табір ще не розпочався.\nОсь розклад першого дня:",
   scheduleCampFinished: "Табір завершено.\nДякуємо, що були з нами! 🎉",
-  registered: (title: string) => `Ви зареєстровані на «${title}» ✅`,
-  unregistered: (title: string) => `Реєстрацію на «${title}» скасовано.`,
-  eventFull: "На жаль, місць більше немає 😔",
-  alreadyRegistered: "Ви вже зареєстровані на цю подію.",
-  myEventsTitle: "Ваші реєстрації:",
-  myEventsEmpty: "Ви поки не зареєстровані на жодну подію. Подивіться /events",
   mustCheckInFirst: "Спершу відмітьтесь: напишіть своє прізвище та ім'я.",
-  morningDigest: "Доброго ранку! ☀️ Сьогодні в таборі:",
-  registerButton: "Зареєструватися",
-  unregisterButton: "Скасувати реєстрацію",
-  spotsLeft: (n: number) => `вільних місць: ${n}`,
 
   // /myid
   yourId: (id: number) => `Ваш Telegram ID: <code>${id}</code>`,
@@ -46,6 +54,14 @@ export const M = {
     `Готово, ${name}! Ви підключені як лідер команди «${team}» ✅`,
   leaderNotFound:
     "Не знайшли вас у списку лідерів 😔 Зверніться до адміністратора.",
+
+  // Responsible check-in
+  confirmResp: (name: string) =>
+    `Це ви — відповідальний за майстер-клас?\n${name}\n\nНатисніть, щоб підтвердитись 👇`,
+  respCheckedIn: (name: string, titles: string) =>
+    `Готово, ${name}! Ви підключені як відповідальний за: ${titles} ✅`,
+  respNotFound:
+    "Не знайшли вас у списку відповідальних 😔 Зверніться до адміністратора.",
 
   // Leader commands
   notifyTeamNoText: "Використання: /notifyteam <текст повідомлення>",
@@ -77,6 +93,20 @@ export const M = {
   leaderListLine: (team: string, name: string, linked: boolean) =>
     `• [${team}] ${name}${linked ? " ✅" : " (не підключений)"}`,
 
+  // Responsible admin commands
+  addRespUsage: "Використання: /addresp <ID майстер-класу> <Прізвище та ім'я>",
+  delRespUsage: "Використання: /delresp <ID майстер-класу> <Прізвище та ім'я>",
+  mcNotFoundAdmin: (mcId: string) =>
+    `Майстер-клас з ID ${mcId} не знайдено у каталозі.`,
+  respAdded: (name: string, title: string) =>
+    `${name} — відповідальний за «${title}» ✅`,
+  respDuplicate: (name: string, title: string) =>
+    `${name} вже відповідальний за «${title}».`,
+  respRemoved: (name: string, title: string) =>
+    `${name} більше не відповідальний за «${title}» ✅`,
+  respNotFoundAdmin: (name: string, mcId: string) =>
+    `Відповідального ${name} для МК ${mcId} не знайдено.`,
+
   // Superadmin commands
   notSuperAdmin: "Ця команда доступна лише суперадміну.",
   notAdmin: "Ця команда доступна лише адміністраторам.",
@@ -95,4 +125,16 @@ export const M = {
   notifyTeamHint: "Напишіть команду з текстом:\n/notifyteam <ваше повідомлення>",
   renameTeamHint: "Напишіть команду з новою назвою:\n/renameteam <нова назва>",
 
+  // Responsible tools
+  notResponsible: "Ця функція доступна лише відповідальним за майстер-класи.",
+  noMyMcToday: "Сьогодні ваших майстер-класів немає.",
+  mcAttendeesHeader: (title: string, slot: string, place: string, taken: number, capacity: number) =>
+    `🎨 ${title} — ${slot}, ${place} (${taken}${capacity > 0 ? `/${capacity}` : ""}):`,
+  mcNoAttendees: "— поки нікого",
+  mcNotifyNoText: "Використання: /notifymc <текст повідомлення>",
+  mcNotifyHint: "Напишіть команду з текстом:\n/notifymc <ваше повідомлення>",
+  mcNotifyChoose: (text: string) =>
+    `Учасникам якого майстер-класу надіслати «${text}»?`,
+  mcNotifySent: (sent: number, total: number, title: string, slot: string) =>
+    `Надіслано ${sent}/${total} учасникам «${title}» (${slot}) ✅`,
 };
