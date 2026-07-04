@@ -206,11 +206,17 @@ async function handleMasterclasses(ctx: Context) {
     }
     if (buttons.length === 0) continue;
     kb.text(`— ${s.slot} —`, "mcnoop").row();
-    for (const b of buttons) {
-      const label = `${b.mine ? "❌" : "📝"} ${b.mc.title}${
-        b.mc.capacity > 0 ? ` — ${b.taken}/${b.mc.capacity}` : ""
-      }`;
-      kb.text(label, b.cbData).row();
+    // Two buttons per row: Telegram divides row width evenly, so this keeps
+    // columns aligned on both narrow (mobile) and wide (desktop) clients,
+    // and roughly halves how long the list scrolls.
+    for (let i = 0; i < buttons.length; i += 2) {
+      for (const b of buttons.slice(i, i + 2)) {
+        const label = `${b.mine ? "❌" : "📝"} ${b.mc.title}${
+          b.mc.capacity > 0 ? ` — ${b.taken}/${b.mc.capacity}` : ""
+        }`;
+        kb.text(label, b.cbData);
+      }
+      kb.row();
     }
     anyListed = true;
   }
