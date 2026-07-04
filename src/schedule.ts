@@ -88,10 +88,12 @@ export async function loadTodaySchedule(): Promise<ScheduleResult> {
 
   // Collect non-empty slots from row index 2 onward.
   const slots: ScheduleSlot[] = [];
+  const useBadgeSchedule = target.dateISO >= "2026-08-03" && target.dateISO <= "2026-08-07";
+
   for (let r = 2; r < rows.length; r++) {
     const row = rows[r] ?? [];
-    const time = (row[0] ?? "").trim();
-    const activity = (row[target.colIdx] ?? "").trim();
+    const time = useBadgeSchedule ? (row[8] ?? "").trim() : (row[0] ?? "").trim();
+    const activity = useBadgeSchedule ? (row[9] ?? "").trim() : (row[target.colIdx] ?? "").trim();
     if (!time || !activity) continue;
     slots.push({ time, activity, isCurrent: false });
   }
