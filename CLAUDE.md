@@ -24,7 +24,8 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 
 ### Entry points
 
-- `api/bot.ts` — Telegram webhook handler (POST from Telegram). Wraps `src/bot.ts` via `webhookCallback`. This is the only serverless function (the morning-digest cron was removed).
+- `api/bot.ts` — Telegram webhook handler (POST from Telegram). Wraps `src/bot.ts` via `webhookCallback`.
+- `api/cron/mc-reminder.ts` — Vercel Cron job, protected by `CRON_SECRET`. Reminds checked-in visitors who haven't registered for the upcoming masterclass slot. Two schedules in `vercel.json` (`0 8 * * *` and `0 10 * * *` UTC = 11:00/13:00 Kyiv in summer), each passing a `?before=12:00`/`?before=14:00` query param matched against the slot's start time. Hobby-plan cron jobs fire sometime within the scheduled hour (never earlier), so this is a "no earlier than" reminder, not exact-time.
 
 ### Source modules (`src/`)
 
@@ -34,7 +35,7 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `config.ts` | Env-var loading with required() guard; `todayISO()` and `nowStamp()` helpers (Kyiv timezone) |
 | `sheets.ts` | Thin Google Sheets API wrapper: `getRows`, `updateCell`, `appendRow`, `headerIndex` |
 | `checkin.ts` | Visitor search, name normalization, row-linking, check-in write, team video lookup |
-| `masterclasses.ts` | Masterclass catalog, per-day/slot schedule, and registration CRUD (`EventRegs` tab) |
+| `masterclasses.ts` | Masterclass catalog, per-day/slot schedule, and registration CRUD (`EventRegs` tab); `buildSlotButtons` builds the per-slot registration keyboard shared by `/mc` and the reminder cron |
 | `responsible.ts` | Responsible-person CRUD, search, and linking (mirrors `leaders.ts`) |
 | `messages.ts` | All user-facing Ukrainian strings in one `M` object; also exports `roleCapabilitiesText()` for composing role-based capability messages |
 | `keyboards.ts` | Role-composed persistent reply keyboard (`roleKeyboard(opts)`, `BTN`) |

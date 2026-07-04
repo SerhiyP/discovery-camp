@@ -12,6 +12,7 @@ import {
 } from "./checkin";
 import {
   activeRegs,
+  buildSlotButtons,
   loadMasterclasses,
   loadMCRegistrations,
   loadMCSchedule,
@@ -209,13 +210,6 @@ bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
 
 // --- masterclasses ---
 
-interface MCSlotButton {
-  mc: Masterclass;
-  taken: number;
-  mine: boolean;
-  cbData: string;
-}
-
 async function handleMasterclasses(ctx: Context) {
   const [mcs, schedule, regs] = await Promise.all([
     loadMasterclasses(),
@@ -226,25 +220,10 @@ async function handleMasterclasses(ctx: Context) {
   const kb = new InlineKeyboard();
   let anyListed = false;
   for (const s of slots) {
-    const buttons: MCSlotButton[] = [];
-    for (const id of s.mcIds) {
-      const mc = mcs.find((m) => m.id === id);
-      if (!mc) continue; // unknown ID in MCSchedule (or empty catalog) — skip silently
-      const taken = activeRegs(regs, s.date, s.slot, mc.id);
-      const mine = taken.some((r) => r.telegramId === String(ctx.from!.id));
-      const cbData = `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`;
-      // Telegram rejects the whole message if any button's callback data exceeds 64 bytes
-      if (Buffer.byteLength(cbData) > 64) continue;
-      buttons.push({ mc, taken: taken.length, mine, cbData });
-    }
+    const buttons = buildSlotButtons(s, mcs, regs, String(ctx.from!.id));
     if (buttons.length === 0) continue;
     kb.text(`— ${s.slot} —`, "mcnoop").row();
-    for (const b of buttons) {
-      const label = `${b.mine ? "❌" : "📝"} ${b.mc.title}${
-        b.mc.capacity > 0 ? ` — ${b.taken}/${b.mc.capacity}` : ""
-      }`;
-      kb.text(label, b.cbData).row();
-    }
+    for (const b of buttons) kb.text(b.label, b.cbData).row();
     anyListed = true;
   }
   if (!anyListed) return ctx.reply(M.noMasterclassesToday);

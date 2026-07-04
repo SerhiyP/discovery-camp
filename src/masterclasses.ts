@@ -139,6 +139,48 @@ export function activeRegs(
   );
 }
 
+export function hasActiveRegistrationForSlot(
+  regs: MCRegistration[],
+  date: string,
+  slot: string,
+  telegramId: string,
+): boolean {
+  return regs.some(
+    (r) => r.date === date && r.slot === slot && r.telegramId === telegramId && !r.cancelled,
+  );
+}
+
+export interface MCButton {
+  label: string;
+  cbData: string;
+}
+
+/** Builds the registration buttons for one slot. Pass `viewerTelegramId` to mark
+ *  the viewer's own registration (❌, tap to cancel); omit it for a mine-blind
+ *  view (e.g. a reminder broadcast where every recipient is already unregistered). */
+export function buildSlotButtons(
+  s: SlotSchedule,
+  mcs: Masterclass[],
+  regs: MCRegistration[],
+  viewerTelegramId?: string,
+): MCButton[] {
+  const buttons: MCButton[] = [];
+  for (const id of s.mcIds) {
+    const mc = mcs.find((m) => m.id === id);
+    if (!mc) continue; // unknown ID in MCSchedule (or empty catalog) — skip silently
+    const taken = activeRegs(regs, s.date, s.slot, mc.id);
+    const mine = viewerTelegramId ? taken.some((r) => r.telegramId === viewerTelegramId) : false;
+    const cbData = `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`;
+    // Telegram rejects the whole message if any button's callback data exceeds 64 bytes
+    if (Buffer.byteLength(cbData) > 64) continue;
+    const label = `${mine ? "❌" : "📝"} ${mc.title}${
+      mc.capacity > 0 ? ` — ${taken.length}/${mc.capacity}` : ""
+    }`;
+    buttons.push({ label, cbData });
+  }
+  return buttons;
+}
+
 export type RegisterResult = "ok" | "full" | "already" | "slot_taken";
 
 export async function register(

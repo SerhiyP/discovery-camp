@@ -3,6 +3,14 @@
     "api/bot.ts": {
       "memory": 1024,
       "maxDuration": 10
+    },
+    "api/cron/mc-reminder.ts": {
+      "memory": 1024,
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/cron/mc-reminder?before=12:00", "schedule": "0 8 * * *" },
+    { "path": "/api/cron/mc-reminder?before=14:00", "schedule": "0 10 * * *" }
+  ]
 }

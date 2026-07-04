@@ -1,0 +1,66 @@
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { InlineKeyboard } from "grammy";
+import { bot } from "../../src/bot";
+import { loadVisitors } from "../../src/checkin";
+import { M } from "../../src/messages";
+import {
+  buildSlotButtons,
+  hasActiveRegistrationForSlot,
+  loadMasterclasses,
+  loadMCRegistrations,
+  loadMCSchedule,
+  todaySlots,
+} from "../../src/masterclasses";
+
+// Reminds checked-in visitors who haven't registered for an upcoming masterclass
+// slot yet. Triggered by two Vercel Cron entries (see vercel.json), one per slot,
+// each passing which slot start time ("12:00", "14:00", ...) to remind about via
+// the `before` query param — matched against the slot's start time so it keeps
+// working if the exact end time in MCSchedule shifts day to day.
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const before = String(req.query.before ?? "");
+  if (!before) return res.status(400).json({ error: "missing 'before' query param" });
+
+  const [mcs, schedule, regs, { visitors }] = await Promise.all([
+    loadMasterclasses(),
+    loadMCSchedule(),
+    loadMCRegistrations(),
+    loadVisitors(),
+  ]);
+
+  const slots = todaySlots(schedule).filter((s) => s.slot.startsWith(before));
+  if (slots.length === 0) return res.json({ sent: 0, reason: "no matching slot today" });
+
+  let sent = 0;
+  let total = 0;
+  for (const s of slots) {
+    const buttons = buildSlotButtons(s, mcs, regs);
+    if (buttons.length === 0) continue;
+    const kb = new InlineKeyboard();
+    for (const b of buttons) kb.text(b.label, b.cbData).row();
+
+    const recipients = [
+      ...new Set(
+        visitors
+          .filter((v) => v.checkedIn && v.telegramId)
+          .filter((v) => !hasActiveRegistrationForSlot(regs, s.date, s.slot, v.telegramId))
+          .map((v) => v.telegramId),
+      ),
+    ];
+    total += recipients.length;
+    for (const id of recipients) {
+      try {
+        await bot.api.sendMessage(id, M.mcReminder(s.slot), { reply_markup: kb });
+        sent++;
+      } catch {
+        // user blocked the bot etc.
+      }
+    }
+  }
+  return res.json({ sent, total });
+}
