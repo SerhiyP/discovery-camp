@@ -1,6 +1,15 @@
+const GENERAL_INFO =
+  "Тут можна:\n" +
+  "🎨 реєструватись на майстер-класи\n" +
+  "🗓 дивитись розклад табору\n" +
+  "📋 бачити свої реєстрації";
+
 export const M = {
+  generalInfo: GENERAL_INFO,
   welcome:
-    "Вітаємо в Discovery Camp! 🏕\n\nЩоб відмітитись на реєстрації, напишіть своє прізвище та ім'я — так, як ви вказували їх у формі реєстрації.",
+    "Вітаємо в Discovery Camp! 🏕\n\n" +
+    `${GENERAL_INFO}\n\n` +
+    "Щоб почати, відмітьтесь на реєстрації — напишіть своє прізвище та ім'я, так, як ви вказували їх у формі реєстрації.",
   alreadyLinked: (name: string) => `Ви вже відмічені як ${name} ✅`,
   askName: "Напишіть своє прізвище та ім'я — так, як у формі реєстрації.",
   chooseYourself: "Знайшли кілька збігів. Натисніть на своє ім'я 👇",
@@ -31,6 +40,21 @@ export const M = {
   scheduleNotStarted: "Табір ще не розпочався.\nОсь розклад першого дня:",
   scheduleCampFinished: "Табір завершено.\nДякуємо, що були з нами! 🎉",
   mustCheckInFirst: "Спершу відмітьтесь: напишіть своє прізвище та ім'я.",
+
+  // Role capabilities info (post-registration + /help)
+  capabilitiesBase:
+    "Ось що вам доступно:\n" +
+    "🎨 Майстер-класи — реєстрація на майстер-класи\n" +
+    "🗓 Розклад — розклад табору на сьогодні\n" +
+    "📋 Мої реєстрації — ваші записи на майстер-класи",
+  capabilitiesLeader:
+    "👑 Як лідер команди:\n" +
+    "📢 Сповістити команду — надіслати повідомлення своїй команді\n" +
+    "✏️ Перейменувати команду — змінити назву команди",
+  capabilitiesResponsible:
+    "🎨 Як відповідальний за майстер-клас:\n" +
+    "👥 Учасники МК — список учасників вашого майстер-класу\n" +
+    "📣 Сповістити учасників МК — надіслати їм повідомлення",
 
   // /myid
   yourId: (id: number) => `Ваш Telegram ID: <code>${id}</code>`,
@@ -137,3 +161,13 @@ export const M = {
   mcNotifySent: (sent: number, total: number, title: string, slot: string) =>
     `Надіслано ${sent}/${total} учасникам «${title}» (${slot}) ✅`,
 };
+
+/** Composes the post-registration / `/help` capability message from a person's full
+ *  current role set — mirrors how `roleKeyboard()` composes the reply keyboard. Takes
+ *  the same shape `getUserRoles()` returns so callers can pass it through directly. */
+export function roleCapabilitiesText(roles: { isLeader?: boolean; isResponsible?: boolean }): string {
+  const parts = [M.capabilitiesBase];
+  if (roles.isLeader) parts.push(M.capabilitiesLeader);
+  if (roles.isResponsible) parts.push(M.capabilitiesResponsible);
+  return parts.join("\n\n");
+}

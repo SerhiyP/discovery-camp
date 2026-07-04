@@ -22,7 +22,7 @@ import {
   unregister,
 } from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
-import { M } from "./messages";
+import { M, roleCapabilitiesText } from "./messages";
 import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
 import {
   addLeader,
@@ -48,16 +48,35 @@ export const bot = new Bot(config.botToken);
 
 const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
-async function keyboardForUser(telegramId: number): Promise<import("grammy").Keyboard | undefined> {
-  const [{ leaders }, { responsible }] = await Promise.all([loadLeaders(), loadResponsible()]);
-  const isLeader = findLeadersByTelegramId(leaders, telegramId).length > 0;
-  const isResponsible = findResponsibleByTelegramId(responsible, telegramId).length > 0;
-  if (isLeader || isResponsible) {
-    return roleKeyboard({ leader: isLeader, responsible: isResponsible });
+async function getUserRoles(
+  telegramId: number,
+): Promise<{ isVisitor: boolean; isLeader: boolean; isResponsible: boolean }> {
+  const [{ leaders }, { responsible }, { visitors }] = await Promise.all([
+    loadLeaders(),
+    loadResponsible(),
+    loadVisitors(),
+  ]);
+  return {
+    isVisitor: !!findByTelegramId(visitors, telegramId),
+    isLeader: findLeadersByTelegramId(leaders, telegramId).length > 0,
+    isResponsible: findResponsibleByTelegramId(responsible, telegramId).length > 0,
+  };
+}
+
+function keyboardFromRoles(roles: {
+  isVisitor: boolean;
+  isLeader: boolean;
+  isResponsible: boolean;
+}): import("grammy").Keyboard | undefined {
+  if (roles.isLeader || roles.isResponsible) {
+    return roleKeyboard({ leader: roles.isLeader, responsible: roles.isResponsible });
   }
-  const { visitors } = await loadVisitors();
-  if (findByTelegramId(visitors, telegramId)) return roleKeyboard();
+  if (roles.isVisitor) return roleKeyboard();
   return undefined;
+}
+
+async function keyboardForUser(telegramId: number): Promise<import("grammy").Keyboard | undefined> {
+  return keyboardFromRoles(await getUserRoles(telegramId));
 }
 
 // --- check-in ---
@@ -74,6 +93,14 @@ bot.command("start", async (ctx) => {
 
 bot.command("myid", async (ctx) => {
   await ctx.reply(M.yourId(ctx.from!.id), { parse_mode: "HTML" });
+});
+
+bot.command("help", async (ctx) => {
+  const roles = await getUserRoles(ctx.from!.id);
+  if (!roles.isVisitor && !roles.isLeader && !roles.isResponsible) {
+    return ctx.reply(`${M.generalInfo}\n\n${M.mustCheckInFirst}`);
+  }
+  return ctx.reply(roleCapabilitiesText(roles));
 });
 
 bot.command("leader", async (ctx) => {
@@ -100,8 +127,10 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   if (!ok || !visitor) return ctx.editMessageText(M.rowTaken);
 
   await ctx.deleteMessage();
-  const kb = await keyboardForUser(ctx.from.id);
+  const roles = await getUserRoles(ctx.from.id);
+  const kb = keyboardFromRoles(roles);
   await ctx.reply(M.checkedIn(visitor.name, visitor.room || undefined), kb ? { reply_markup: kb } : {});
+  await ctx.reply(roleCapabilitiesText(roles));
   const video = await videoForTeam(visitor.team);
   if (video) {
     if (video.isVideoNote) {
@@ -143,8 +172,10 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
     ? "admin"
     : "leader";
   await setCommandsForUser(bot, ctx.from.id, role);
-  const kb = await keyboardForUser(ctx.from.id);
+  const roles = await getUserRoles(ctx.from.id);
+  const kb = keyboardFromRoles(roles);
   await ctx.reply(M.leaderCheckedIn(leader.name, leader.team), kb ? { reply_markup: kb } : {});
+  await ctx.reply(roleCapabilitiesText(roles));
 });
 
 bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
@@ -170,8 +201,10 @@ bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
   const titles = linked
     .map((r) => mcs.find((m) => m.id === r.mcId)?.title ?? `МК ${r.mcId}`)
     .join(", ");
-  const kb = await keyboardForUser(ctx.from.id);
+  const roles = await getUserRoles(ctx.from.id);
+  const kb = keyboardFromRoles(roles);
   await ctx.reply(M.respCheckedIn(row.name, titles), kb ? { reply_markup: kb } : {});
+  await ctx.reply(roleCapabilitiesText(roles));
 });
 
 // --- masterclasses ---

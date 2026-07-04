@@ -10,6 +10,7 @@ export type UserRole = "user" | "leader" | "admin" | "superadmin";
 // notifyteam, renameteam, …) are intentionally omitted — they must be typed by
 // hand. Leaders reach notifyteam/renameteam via the reply-keyboard buttons.
 const USER_COMMANDS = [
+  { command: "help", description: "Що вміє бот" },
   { command: "mc", description: "Майстер-класи сьогодні" },
   { command: "schedule", description: "Розклад" },
   { command: "myevents", description: "Мої реєстрації" },

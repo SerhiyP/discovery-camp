@@ -36,7 +36,7 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `checkin.ts` | Visitor search, name normalization, row-linking, check-in write, team video lookup |
 | `masterclasses.ts` | Masterclass catalog, per-day/slot schedule, and registration CRUD (`EventRegs` tab) |
 | `responsible.ts` | Responsible-person CRUD, search, and linking (mirrors `leaders.ts`) |
-| `messages.ts` | All user-facing Ukrainian strings in one `M` object |
+| `messages.ts` | All user-facing Ukrainian strings in one `M` object; also exports `roleCapabilitiesText()` for composing role-based capability messages |
 | `keyboards.ts` | Role-composed persistent reply keyboard (`roleKeyboard(opts)`, `BTN`) |
 | `admins.ts` | Admin CRUD and `isAdmin` check (Admins sheet + ADMIN_IDS env var) |
 | `leaders.ts` | Leader CRUD, search, and linking |
@@ -88,3 +88,4 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
 - **Masterclass list is one message per day**, not one per slot: a single `InlineKeyboard` with inert `mcnoop` header rows (`— 12:00-13:00 —`) separating each slot's masterclass buttons. Spots-left is shown on the button; place is shown in the registration confirmation instead. The keyboard is a point-in-time snapshot — it doesn't live-update after someone (else) registers.
 - **Admin delete-by-name commands prefer button pickers over typed exact names** — see `/delresp` (`src/bot.ts`): lists candidates as buttons grouped by category, with a confirm step before the actual delete. Apply the same shape if `/removeleader`/`/removeadmin` are revisited.
 - **No global `bot.catch`**: an uncaught handler error becomes an HTTP 500, which Telegram retries as the same update. Handlers whose reply could exceed Telegram's ~4096-char message limit at scale (e.g. `/syncresp`'s per-name report) should chunk their output (see `replyChunked` in `src/bot.ts`) rather than risk this.
+- Check-in sends a short role-capability follow-up message after the confirmation; `/help` shows the same info on demand.
