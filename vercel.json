@@ -10,7 +10,6 @@
     }
   },
   "crons": [
-    { "path": "/api/cron/mc-reminder?before=12:00", "schedule": "0 8 * * *" },
     { "path": "/api/cron/mc-reminder?before=14:00", "schedule": "0 10 * * *" }
   ]
 }
