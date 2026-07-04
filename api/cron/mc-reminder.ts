@@ -26,15 +26,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const before = String(req.query.before ?? "");
   if (!before) return res.status(400).json({ error: "missing 'before' query param" });
 
-  const [mcs, schedule, regs, { visitors }] = await Promise.all([
+  // 1. Fetch only the schedule first
+  const schedule = await loadMCSchedule();
+
+  // 2. Check if we have any matching slots today. If not, exit immediately.
+  const slots = todaySlots(schedule).filter((s) => s.slot.startsWith(before));
+  if (slots.length === 0) return res.json({ sent: 0, reason: "no matching slot today" });
+
+  // 3. Only fetch the remaining data if there is actually a slot to process today
+  const [mcs, regs, { visitors }] = await Promise.all([
     loadMasterclasses(),
-    loadMCSchedule(),
     loadMCRegistrations(),
     loadVisitors(),
   ]);
-
-  const slots = todaySlots(schedule).filter((s) => s.slot.startsWith(before));
-  if (slots.length === 0) return res.json({ sent: 0, reason: "no matching slot today" });
 
   let sent = 0;
   let total = 0;
@@ -47,18 +51,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const recipients = [
       ...new Set(
         visitors
-          .filter((v) => v.checkedIn && v.telegramId)
+          .filter((v) => {
+            const checkedInStr = (v.checkedIn ?? "").trim().toLowerCase();
+            const isCheckedIn = checkedInStr && !["false", "no", "ні", "0"].includes(checkedInStr);
+            return isCheckedIn && v.telegramId;
+          })
           .filter((v) => !hasActiveRegistrationForSlot(regs, s.date, s.slot, v.telegramId))
           .map((v) => v.telegramId),
       ),
     ];
     total += recipients.length;
-    for (const id of recipients) {
-      try {
-        await bot.api.sendMessage(id, M.mcReminder(s.slot), { reply_markup: kb });
-        sent++;
-      } catch {
-        // user blocked the bot etc.
+
+    // Send messages in chunks of 15 to avoid Telegram API rate limits (max 30/s)
+    const CHUNK_SIZE = 15;
+    for (let i = 0; i < recipients.length; i += CHUNK_SIZE) {
+      const chunk = recipients.slice(i, i + CHUNK_SIZE);
+      await Promise.all(
+        chunk.map(async (id) => {
+          try {
+            await bot.api.sendMessage(id, M.mcReminder(s.slot), { reply_markup: kb });
+            sent++;
+          } catch {
+            // user blocked the bot, invalid ID, etc.
+          }
+        })
+      );
+      if (i + CHUNK_SIZE < recipients.length) {
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // sleep 1s between chunks
       }
     }
   }
