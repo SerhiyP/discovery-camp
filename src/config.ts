@@ -20,11 +20,17 @@ export const config = {
   gridSheetId: process.env.GRID_SHEET_ID ?? "",
 
   responsesTab: process.env.RESPONSES_TAB ?? "Form Responses 1",
-  nameHeader: process.env.NAME_HEADER ?? "Прізвище та ім'я",
-  checkinHeader: process.env.CHECKIN_HEADER ?? "Checked in",
-  telegramIdHeader: process.env.TELEGRAM_ID_HEADER ?? "Telegram ID",
-  teamHeader: process.env.TEAM_HEADER ?? "",
-  roomHeader: process.env.ROOM_HEADER ?? "Кімната",
+
+  // ── Visitor sheet column headers ─────────────────────────────────────────
+  // Update these strings whenever the sheet
+  // column names change — no other code edits needed.
+  nameHeader:           "Стовпець 1",
+  paymentStatusHeader:  "Статус оплати",
+  doctorStatusHeader:  "Лікар",
+  roomHeader:           "Кімната поселення",
+  teamHeader:           "Номер команди",
+  checkinHeader:       "Checked in",
+  telegramIdHeader:     "Telegram ID",
 
   registrationsTab: "EventRegs",
   mcScheduleTab: "MCSchedule",

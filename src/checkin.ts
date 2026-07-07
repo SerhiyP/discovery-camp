@@ -4,6 +4,8 @@ import { appendRow, getRows, headerIndex, updateCell } from "./sheets";
 export interface Visitor {
   rowIndex: number; // 0-based, including header row
   name: string;
+  paymentStatus: string;
+  doctorStatus: string;
   team: string;
   room: string;
   telegramId: string;
@@ -12,7 +14,15 @@ export interface Visitor {
 
 interface VisitorSheet {
   visitors: Visitor[];
-  cols: { name: number; checkin: number; telegramId: number; team: number; room: number };
+  cols: { 
+    name: number;
+    paymentStatus: number;
+    doctorStatus: number;
+    checkin: number;
+    telegramId: number;
+    team: number;
+    room: number
+  };
 }
 
 export async function loadVisitors(): Promise<VisitorSheet> {
@@ -21,11 +31,13 @@ export async function loadVisitors(): Promise<VisitorSheet> {
 
   const header = rows[0];
   const cols = {
-    name: headerIndex(header, config.nameHeader),
-    checkin: headerIndex(header, config.checkinHeader),
-    telegramId: headerIndex(header, config.telegramIdHeader),
-    team: config.teamHeader ? headerIndex(header, config.teamHeader) : -1,
-    room: config.roomHeader ? headerIndex(header, config.roomHeader) : -1,
+    name:          headerIndex(header, config.nameHeader),
+    paymentStatus: headerIndex(header, config.paymentStatusHeader),
+    doctorStatus: headerIndex(header, config.doctorStatusHeader),
+    checkin:       headerIndex(header, config.checkinHeader),
+    telegramId:    headerIndex(header, config.telegramIdHeader),
+    team:          config.teamHeader ? headerIndex(header, config.teamHeader) : -1,
+    room:          config.roomHeader ? headerIndex(header, config.roomHeader) : -1,
   };
   if (cols.name === -1)
     throw new Error(`Column "${config.nameHeader}" not found in "${config.responsesTab}"`);
@@ -42,6 +54,8 @@ export async function loadVisitors(): Promise<VisitorSheet> {
     visitors.push({
       rowIndex: i,
       name,
+      paymentStatus: cols.paymentStatus >= 0 ? (row[cols.paymentStatus] ?? "").trim() : "",
+      doctorStatus: cols.doctorStatus >= 0 ? (row[cols.doctorStatus] ?? "").trim() : "",
       team: cols.team >= 0 ? (row[cols.team] ?? "").trim() : "",
       room: cols.room >= 0 ? (row[cols.room] ?? "").trim() : "",
       telegramId: (row[cols.telegramId] ?? "").trim(),
