@@ -1,16 +1,10 @@
 import { config, nowStamp, todayISO } from "./config";
-import {
-  appendRow,
-  getRows,
-  getRowsFromSpreadsheet,
-  headerIndex,
-  updateCell,
-} from "./sheets";
+import { appendRow, getRows, headerIndex, updateCell } from "./sheets";
 
-// The catalog lives in the read-only grid spreadsheet (GRID_SHEET_ID), maintained by
-// the organizers. Layout: a banner row, then a header row ("№ | Назва | …"), then the
-// catalog rows; tournament tables follow below and must be ignored.
-const MC_CATALOG_TAB = "5.Майстер-класи 2026";
+// The catalog and the schedule share the MCSchedule tab of the bot's spreadsheet:
+// schedule columns (Date | Slot | MC IDs) on the left, catalog columns
+// (№ | Назва | Відповідальний | Місце проведення | … | Кількість учасників |
+// посилання на мапу) to the right of them. The two blocks are independent row-wise.
 
 export interface Masterclass {
   id: string;
@@ -36,16 +30,25 @@ export interface MCRegistration {
   cancelled: boolean;
 }
 
-export async function loadMasterclasses(): Promise<Masterclass[]> {
-  if (!config.gridSheetId) return [];
-  const rows = await getRowsFromSpreadsheet(config.gridSheetId, MC_CATALOG_TAB);
-  // The header row is not the first row — find the row that contains "Назва".
-  const headerRowIdx = rows.findIndex((r) => headerIndex(r, "Назва") !== -1);
+/** Raw rows of the MCSchedule tab — pass them to loadMasterclasses/loadMCSchedule
+ *  to parse both from a single Sheets fetch. */
+export async function loadMCTabRows(): Promise<string[][]> {
+  return getRows(config.mcScheduleTab);
+}
+
+export async function loadMasterclasses(prefetched?: string[][]): Promise<Masterclass[]> {
+  const rows = prefetched ?? (await loadMCTabRows());
+  const headerRowIdx = rows.findIndex((r) => headerIndex(r, "Місце проведення") !== -1);
   if (headerRowIdx === -1) return [];
   const h = rows[headerRowIdx];
+  const id = headerIndex(h, "№");
+  if (id === -1) return [];
+  // The title column may have no header of its own (E1:F1 are merged in the
+  // sheet, so "№" spans both) — fall back to the column right after "№".
+  const title = headerIndex(h, "Назва");
   const c = {
-    id: headerIndex(h, "№"),
-    title: headerIndex(h, "Назва"),
+    id,
+    title: title !== -1 ? title : id + 1,
     responsible: headerIndex(h, "Відповідальний"),
     place: headerIndex(h, "Місце проведення"),
     capacity: headerIndex(h, "Кількість учасників"),
@@ -54,7 +57,7 @@ export async function loadMasterclasses(): Promise<Masterclass[]> {
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     // "№" values look like "1." — canonical ID is "1". Rows without a numeric "№"
-    // (blank separators, tournament tables below the catalog) are skipped.
+    // (blank separators) are skipped.
     const idMatch = (row[c.id] ?? "").trim().match(/^(\d+)\.?$/);
     const title = (row[c.title] ?? "").trim();
     if (!idMatch || !title) continue;
@@ -79,8 +82,8 @@ export function splitResponsibleNames(text: string): string[] {
     .filter(Boolean);
 }
 
-export async function loadMCSchedule(): Promise<SlotSchedule[]> {
-  const rows = await getRows(config.mcScheduleTab);
+export async function loadMCSchedule(prefetched?: string[][]): Promise<SlotSchedule[]> {
+  const rows = prefetched ?? (await loadMCTabRows());
   if (rows.length === 0) return [];
   const h = rows[0];
   const c = {

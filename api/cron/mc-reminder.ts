@@ -9,6 +9,7 @@ import {
   loadMasterclasses,
   loadMCRegistrations,
   loadMCSchedule,
+  loadMCTabRows,
   todaySlots,
 } from "../../src/masterclasses";
 
@@ -26,8 +27,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const before = String(req.query.before ?? "");
   if (!before) return res.status(400).json({ error: "missing 'before' query param" });
 
-  // 1. Fetch only the schedule first
-  const schedule = await loadMCSchedule();
+  // 1. Fetch only the MCSchedule tab first (it holds both the schedule and the catalog)
+  const tabRows = await loadMCTabRows();
+  const schedule = await loadMCSchedule(tabRows);
 
   // 2. Check if we have any matching slots today. If not, exit immediately.
   const slots = todaySlots(schedule).filter((s) => s.slot.startsWith(before));
@@ -35,7 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // 3. Only fetch the remaining data if there is actually a slot to process today
   const [mcs, regs, { visitors }] = await Promise.all([
-    loadMasterclasses(),
+    loadMasterclasses(tabRows),
     loadMCRegistrations(),
     loadVisitors(),
   ]);

@@ -16,6 +16,7 @@ import {
   loadMasterclasses,
   loadMCRegistrations,
   loadMCSchedule,
+  loadMCTabRows,
   Masterclass,
   register,
   splitResponsibleNames,
@@ -211,11 +212,9 @@ bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
 // --- masterclasses ---
 
 async function handleMasterclasses(ctx: Context) {
-  const [mcs, schedule, regs] = await Promise.all([
-    loadMasterclasses(),
-    loadMCSchedule(),
-    loadMCRegistrations(),
-  ]);
+  const [tabRows, regs] = await Promise.all([loadMCTabRows(), loadMCRegistrations()]);
+  const mcs = await loadMasterclasses(tabRows);
+  const schedule = await loadMCSchedule(tabRows);
   const slots = todaySlots(schedule);
   const kb = new InlineKeyboard();
   let anyListed = false;
@@ -644,7 +643,9 @@ async function myOccurrencesToday(telegramId: number): Promise<MCOccurrence[] | 
   const mine = findResponsibleByTelegramId(responsible, telegramId);
   if (mine.length === 0) return null;
   const myIds = [...new Set(mine.map((r) => r.mcId))];
-  const [mcs, schedule] = await Promise.all([loadMasterclasses(), loadMCSchedule()]);
+  const tabRows = await loadMCTabRows();
+  const mcs = await loadMasterclasses(tabRows);
+  const schedule = await loadMCSchedule(tabRows);
   const occ: MCOccurrence[] = [];
   for (const s of todaySlots(schedule)) {
     for (const id of s.mcIds) {
