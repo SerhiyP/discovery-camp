@@ -21,6 +21,28 @@ export const M = {
   checkedIn: (name: string, room?: string) =>
     `Готово, ${name}! Ви відмічені ✅${room ? `\nВаша кімната: ${room}` : ""}\nГарного табору! 🎉`,
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
+
+  // --- staged check-in: doctor QR -> Аня -> final message ---
+  medQrCaption:
+    "Ви відмічені ✅\nТепер пройдіть медогляд — покажіть цей QR-код лікарю 👨‍⚕️\nРечі залиште на доріжці.",
+  medQrNoUsername:
+    "Ви відмічені ✅\nТепер пройдіть медогляд у лікаря 👨‍⚕️ Речі залиште на доріжці.",
+  medPassed:
+    "Медогляд пройдено ✅\nТепер підійдіть до Ані (фінансист). Коли Аня відмітить оплату — натисніть кнопку нижче 👇",
+  medNotAdmin: "Цей QR-код призначений для медичного персоналу.",
+  medVisitorNotFound: "Не знайшли учасника 😔",
+  medAlreadyDone: (name: string) => `У ${name} медогляд уже відмічено ✅`,
+  medMarked: (name: string) => `✅ ${name} — медогляд відмічено`,
+  anyaNotYet: "Аня ще не відмітила оплату 🙂 Зачекайте і спробуйте ще раз.",
+  btnCheckAnya: "🔄 Я пройшов(ла) Аню",
+  registrationComplete: (opts: { team?: string; leaders?: string; room?: string }) => {
+    const lines = ["Реєстрацію завершено 🎉"];
+    if (opts.team) lines.push(`Твоя група: ${opts.team}`);
+    if (opts.leaders) lines.push(`Наставники: ${opts.leaders}`);
+    if (opts.room) lines.push(`Кімната: ${opts.room}`);
+    lines.push("", "Підійди до наставника — він видасть браслет і бейджик. Гарного табору! 🏕");
+    return lines.join("\n");
+  },
   noMasterclassesToday: "Сьогодні майстер-класів немає.",
   mcDayTitle: "🎨 Майстер-класи сьогодні:",
   mcRegistered: (title: string, slot: string, place: string) =>

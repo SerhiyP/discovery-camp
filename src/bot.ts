@@ -1,5 +1,7 @@
-import { Bot, Context, InlineKeyboard } from "grammy";
-import { config, todayISO } from "./config";
+import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
+import QRCode from "qrcode";
+import { config, nowStamp, todayISO } from "./config";
+import { updateCell } from "./sheets";
 import {
   findByTelegramId,
   linkAndCheckIn,
@@ -84,6 +86,10 @@ async function keyboardForUser(telegramId: number): Promise<import("grammy").Key
 // --- check-in ---
 
 bot.command("start", async (ctx) => {
+  const payload = (ctx.match ?? "").trim();
+  const medMatch = /^med_(\d+)$/.exec(payload);
+  if (medMatch) return handleDoctorScan(ctx, Number(medMatch[1]));
+
   const { visitors } = await loadVisitors();
   const me = findByTelegramId(visitors, ctx.from!.id);
   if (me) {
@@ -92,6 +98,30 @@ bot.command("start", async (ctx) => {
   }
   return ctx.reply(M.welcome);
 });
+
+/** Admin scanned a participant's personal QR -> mark the medical exam and push the next step. */
+async function handleDoctorScan(ctx: Context, targetId: number) {
+  const { admins } = await loadAdmins();
+  if (!isSuperAdmin(ctx.from!.id) && !isAdmin(ctx.from!.id, admins)) {
+    return ctx.reply(M.medNotAdmin);
+  }
+
+  const sheet = await loadVisitors();
+  const visitor = findByTelegramId(sheet.visitors, targetId);
+  if (!visitor) return ctx.reply(M.medVisitorNotFound);
+  if (visitor.doctorStatus) return ctx.reply(M.medAlreadyDone(visitor.name));
+
+  await updateCell(config.responsesTab, visitor.rowIndex, sheet.cols.doctorStatus, nowStamp());
+  await ctx.reply(M.medMarked(visitor.name));
+
+  try {
+    await bot.api.sendMessage(targetId, M.medPassed, {
+      reply_markup: new InlineKeyboard().text(M.btnCheckAnya, "checkanya"),
+    });
+  } catch {
+    // Participant may have blocked the bot; the admin confirmation above still stands.
+  }
+}
 
 bot.command("myid", async (ctx) => {
   await ctx.reply(M.yourId(ctx.from!.id), { parse_mode: "HTML" });
@@ -129,10 +159,45 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   if (!ok || !visitor) return ctx.editMessageText(M.rowTaken);
 
   await ctx.deleteMessage();
-  const roles = await getUserRoles(ctx.from.id);
+
+  // Re-link of an already-processed participant: skip straight to the final message.
+  if (visitor.doctorStatus && visitor.paymentStatus) {
+    return sendFinalMessage(ctx, visitor);
+  }
+
+  // Otherwise send the personal QR the doctor scans to mark the medical exam.
+  if (config.botUsername) {
+    const url = `https://t.me/${config.botUsername}?start=med_${ctx.from.id}`;
+    const png = await QRCode.toBuffer(url, { width: 512, margin: 2 });
+    await ctx.replyWithPhoto(new InputFile(png, "med-qr.png"), { caption: M.medQrCaption });
+  } else {
+    await ctx.reply(M.medQrNoUsername);
+  }
+});
+
+/**
+ * Final registration message: team, leader names, room, then the role keyboard,
+ * capabilities, and the team video. Both call sites run in the participant's own context.
+ */
+async function sendFinalMessage(ctx: Context, visitor: { team: string; room: string }) {
+  const { leaders } = await loadLeaders();
+  const leaderNames = leaders
+    .filter((l) => l.team === visitor.team)
+    .map((l) => l.name)
+    .join(", ");
+
+  const roles = await getUserRoles(ctx.from!.id);
   const kb = keyboardFromRoles(roles);
-  await ctx.reply(M.checkedIn(visitor.name, visitor.room || undefined), kb ? { reply_markup: kb } : {});
+  await ctx.reply(
+    M.registrationComplete({
+      team: visitor.team || undefined,
+      leaders: leaderNames || undefined,
+      room: visitor.room || undefined,
+    }),
+    kb ? { reply_markup: kb } : {},
+  );
   await ctx.reply(roleCapabilitiesText(roles));
+
   const video = await videoForTeam(visitor.team);
   if (video) {
     if (video.isVideoNote) {
@@ -141,6 +206,19 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
       await ctx.replyWithVideo(video.fileId, { caption: M.videoCaption });
     }
   }
+}
+
+// Participant taps "Я пройшов(ла) Аню" -> send the final message once payment is marked.
+bot.callbackQuery("checkanya", async (ctx) => {
+  const { visitors } = await loadVisitors();
+  const me = findByTelegramId(visitors, ctx.from.id);
+  if (!me) return ctx.answerCallbackQuery(M.mustCheckInFirst);
+  if (!me.doctorStatus || !me.paymentStatus) {
+    return ctx.answerCallbackQuery(M.anyaNotYet);
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage();
+  await sendFinalMessage(ctx, me);
 });
 
 bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
