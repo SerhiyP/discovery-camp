@@ -101,7 +101,7 @@ export async function loadMCSchedule(prefetched?: string[][]): Promise<SlotSched
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (!date || !slot || mcIds.length === 0) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !slot || mcIds.length === 0) continue;
     slots.push({ date, slot, mcIds });
   }
   return slots;
