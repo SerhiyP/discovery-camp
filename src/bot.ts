@@ -19,10 +19,12 @@ import {
   loadMCRegistrations,
   loadMCSchedule,
   loadMCTabRows,
+  loadMCTopics,
   Masterclass,
   register,
   splitResponsibleNames,
   todaySlots,
+  topicLines,
   unregister,
 } from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
@@ -293,18 +295,24 @@ async function handleMasterclasses(ctx: Context) {
   const [tabRows, regs] = await Promise.all([loadMCTabRows(), loadMCRegistrations()]);
   const mcs = await loadMasterclasses(tabRows);
   const schedule = await loadMCSchedule(tabRows);
+  const topics = await loadMCTopics(tabRows);
   const slots = todaySlots(schedule);
   const kb = new InlineKeyboard();
+  const topics_lines: string[] = [];
   let anyListed = false;
   for (const s of slots) {
     const buttons = buildSlotButtons(s, mcs, regs, String(ctx.from!.id));
     if (buttons.length === 0) continue;
     kb.text(`— ${s.slot} —`, "mcnoop").row();
     for (const b of buttons) kb.text(b.label, b.cbData).row();
+    topics_lines.push(...topicLines(s.mcIds, mcs, topics, s.date));
     anyListed = true;
   }
   if (!anyListed) return ctx.reply(M.noMasterclassesToday);
-  return ctx.reply(M.mcDayTitle, { reply_markup: kb });
+  const body = topics_lines.length
+    ? [M.mcDayTitle, "", ...topics_lines].join("\n")
+    : M.mcDayTitle;
+  return ctx.reply(body, { reply_markup: kb });
 }
 
 async function handleSchedule(ctx: Context) {
