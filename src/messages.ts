@@ -45,6 +45,7 @@ export const M = {
   },
   noMasterclassesToday: "Сьогодні майстер-класів немає.",
   mcDayTitle: "🎨 Майстер-класи сьогодні:",
+  mcTopicLine: (title: string, topic: string) => `📌 ${title}: ${topic}`,
   mcRegistered: (title: string, slot: string, place: string) =>
     `Ви зареєстровані на «${title}» (${slot}, ${place}) ✅`,
   mcUnregistered: (title: string, slot: string) =>
