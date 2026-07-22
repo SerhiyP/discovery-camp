@@ -10,7 +10,9 @@ import {
   loadMCRegistrations,
   loadMCSchedule,
   loadMCTabRows,
+  loadMCTopics,
   todaySlots,
+  topicLines,
 } from "../../src/masterclasses";
 
 // Reminds checked-in visitors who haven't registered for an upcoming masterclass
@@ -36,10 +38,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (slots.length === 0) return res.json({ sent: 0, reason: "no matching slot today" });
 
   // 3. Only fetch the remaining data if there is actually a slot to process today
-  const [mcs, regs, { visitors }] = await Promise.all([
+  const [mcs, regs, { visitors }, topics] = await Promise.all([
     loadMasterclasses(tabRows),
     loadMCRegistrations(),
     loadVisitors(),
+    loadMCTopics(tabRows),
   ]);
 
   let sent = 0;
@@ -49,6 +52,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (buttons.length === 0) continue;
     const kb = new InlineKeyboard();
     for (const b of buttons) kb.text(b.label, b.cbData).row();
+
+    const tLines = topicLines(s.mcIds, mcs, topics, s.date);
+    const reminderText = tLines.length
+      ? [M.mcReminder(s.slot), "", ...tLines].join("\n")
+      : M.mcReminder(s.slot);
 
     const recipients = [
       ...new Set(
@@ -71,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await Promise.all(
         chunk.map(async (id) => {
           try {
-            await bot.api.sendMessage(id, M.mcReminder(s.slot), { reply_markup: kb });
+            await bot.api.sendMessage(id, reminderText, { reply_markup: kb });
             sent++;
           } catch {
             // user blocked the bot, invalid ID, etc.

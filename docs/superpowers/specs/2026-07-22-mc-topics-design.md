@@ -51,6 +51,15 @@ schedule header (`Date | Slot | MC IDs`).
 The date columns are every header cell after `Назва` that matches
 `^\d{4}-\d{2}-\d{2}$`.
 
+**Sheet-authoring caveat:** the topics block must sit **strictly below** the
+catalog rows in `MCSchedule`. Its date columns extend rightward from col C and
+overlap the catalog's columns (incl. col E = catalog `№`), so placing it beside
+the catalog would collide. For the same reason, a topic cell should not be a
+bare number (e.g. `2024`): if it landed in the catalog's `№` column it would
+match the catalog's `^(\d+)\.?$` guard and inject a phantom masterclass. The
+phantom is harmless in practice (its ID never appears in any slot's `MC IDs`,
+so it's never rendered), but avoid bare-number topics to keep the blocks clean.
+
 ### Row parsing
 
 For each data row below the header:

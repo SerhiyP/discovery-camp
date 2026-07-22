@@ -1,4 +1,5 @@
 import { config, nowStamp, todayISO } from "./config";
+import { M } from "./messages";
 import { appendRow, getRows, headerIndex, updateCell } from "./sheets";
 
 // The catalog and the schedule share the MCSchedule tab of the bot's spreadsheet:
@@ -100,10 +101,61 @@ export async function loadMCSchedule(prefetched?: string[][]): Promise<SlotSched
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (!date || !slot || mcIds.length === 0) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !slot || mcIds.length === 0) continue;
     slots.push({ date, slot, mcIds });
   }
   return slots;
+}
+
+/** Reads the topic-matrix block of the MCSchedule tab into a lookup keyed
+ *  `${date}|${mcId}` -> topic. The block header row is `№ | Назва | <dates…>`
+ *  (col A = "№", col B = "Назва"), distinct from the catalog header whose "№"
+ *  is further right. Reuses prefetched tab rows; no extra fetch. Blank cells and
+ *  rows without a numeric № are skipped. */
+export async function loadMCTopics(prefetched?: string[][]): Promise<Map<string, string>> {
+  const rows = prefetched ?? (await loadMCTabRows());
+  const topics = new Map<string, string>();
+  const headerRowIdx = rows.findIndex(
+    (r) => (r[0] ?? "").trim() === "№" && (r[1] ?? "").trim() === "Назва",
+  );
+  if (headerRowIdx === -1) return topics;
+  const header = rows[headerRowIdx];
+  // Date columns: any header cell (past col B) that is an ISO date.
+  const dateCols: { col: number; date: string }[] = [];
+  for (let col = 2; col < header.length; col++) {
+    const date = (header[col] ?? "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dateCols.push({ col, date });
+  }
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const idMatch = (row[0] ?? "").trim().match(/^(\d+)\.?$/);
+    if (!idMatch) continue;
+    const id = idMatch[1];
+    for (const { col, date } of dateCols) {
+      const topic = (row[col] ?? "").trim();
+      if (topic) topics.set(`${date}|${id}`, topic);
+    }
+  }
+  return topics;
+}
+
+/** One `📌 <title>: <topic>` line per MC in `mcIds` that has a topic on `date`.
+ *  MCs without a topic (or unknown IDs) produce no line. Order follows `mcIds`. */
+export function topicLines(
+  mcIds: string[],
+  mcs: Masterclass[],
+  topics: Map<string, string>,
+  date: string,
+): string[] {
+  const lines: string[] = [];
+  for (const id of mcIds) {
+    const topic = topics.get(`${date}|${id}`);
+    if (!topic) continue;
+    const mc = mcs.find((m) => m.id === id);
+    if (!mc) continue;
+    lines.push(M.mcTopicLine(mc.title, topic));
+  }
+  return lines;
 }
 
 export function todaySlots(schedule: SlotSchedule[]): SlotSchedule[] {
