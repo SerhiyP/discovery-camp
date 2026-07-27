@@ -93,7 +93,12 @@ bot.command("start", async (ctx) => {
   const medMatch = /^med_(\d+)$/.exec(payload);
   if (medMatch) return handleDoctorScan(ctx, Number(medMatch[1]));
   if (payload === "caught") {
-    await logCatch(String(ctx.from!.id));
+    try {
+      await logCatch(String(ctx.from!.id));
+    } catch {
+      // A failed sheet write shouldn't stop the reveal reply — many people click this link
+      // within the same minute, and Sheets can hiccup under that burst.
+    }
     return ctx.reply(M.phishCaught);
   }
 
@@ -817,6 +822,7 @@ async function renderCaught(ctx: Context, o: MCOccurrence) {
   const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
   const earliestByTelegramId = new Map<string, string>();
   for (const c of catches) {
+    if (!c.caughtAt.startsWith(o.date)) continue; // only count clicks from this occurrence's day
     const existing = earliestByTelegramId.get(c.telegramId);
     if (!existing || c.caughtAt < existing) earliestByTelegramId.set(c.telegramId, c.caughtAt);
   }

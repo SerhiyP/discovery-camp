@@ -42,6 +42,7 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `admins.ts` | Admin CRUD and `isAdmin` check (Admins sheet + ADMIN_IDS env var) |
 | `leaders.ts` | Leader CRUD, search, and linking |
 | `commands.ts` | Scoped Telegram command menus per role |
+| `phishing.ts` | Phishing-awareness training: `logCatch`/`loadCatches` against the `PhishCatches` tab |
 
 ### Google Sheets schema
 
@@ -54,6 +55,7 @@ All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 - **`Videos`** — `ID | Team | File ID | Type` for per-team leader videos. `ID` is a permanent numeric key; `Team` is a display name that can be renamed. `Type` is `video_note` or `video`.
 - **`Admins`** — `Telegram ID | Name` (bot-managed via `/addadmin`).
 - **`Leaders`** — `Team | Name | Telegram ID | Linked at` (bot-managed via `/addleader`). The `Team` column stores the **numeric ID** matching the `Videos.ID` column.
+- **`PhishCatches`** — `Telegram ID | Caught at` — append-only click log for the phishing-awareness training exercise. Written by `/start caught` (deep link), read by `/caught`.
 
 ### Role system
 
@@ -62,7 +64,7 @@ Four tiers, checked in order:
 1. **Superadmin** — Telegram IDs in `ADMIN_IDS` env var. Full access.
 2. **Admin** — rows in the `Admins` sheet. Can manage leaders and broadcast.
 3. **Leader** — rows in the `Leaders` sheet. Can notify team, rename team, set team video.
-4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees. Independent of the leader role; a person can hold both.
+4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees, and reveal same-day phishing-training catches via `/caught` (typed-only, no menu entry — same precedent as `/notifymc`). Independent of the leader role; a person can hold both.
 
 ### Reply keyboards
 
