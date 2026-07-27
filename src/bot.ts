@@ -342,7 +342,12 @@ async function handleSchedule(ctx: Context) {
 }
 
 async function handleMyRegs(ctx: Context) {
-  const [mcs, regs] = await Promise.all([loadMasterclasses(), loadMCRegistrations()]);
+  const tabRows = await loadMCTabRows();
+  const [mcs, regs, topics] = await Promise.all([
+    loadMasterclasses(tabRows),
+    loadMCRegistrations(),
+    loadMCTopics(tabRows),
+  ]);
   const today = todayISO();
   const mine = regs.filter(
     (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled && r.date >= today,
@@ -351,7 +356,10 @@ async function handleMyRegs(ctx: Context) {
   const lines = [M.myRegsTitle, ""];
   for (const r of mine) {
     const mc = mcs.find((m) => m.id === r.mcId);
-    if (mc) lines.push(`• ${r.date}, ${r.slot} — ${mc.title} (${mc.place})`);
+    if (mc) {
+      const topic = topics.get(`${r.date}|${r.mcId}`);
+      lines.push(`• ${r.date}, ${r.slot} — ${M.mcTitleWithTopic(mc.title, topic)} (${mc.place})`);
+    }
   }
   return ctx.reply(lines.join("\n"));
 }
@@ -363,7 +371,12 @@ bot.command("myevents", handleMyRegs);
 bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
   if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
-  const [mcs, { visitors }] = await Promise.all([loadMasterclasses(), loadVisitors()]);
+  const tabRows = await loadMCTabRows();
+  const [mcs, topics, { visitors }] = await Promise.all([
+    loadMasterclasses(tabRows),
+    loadMCTopics(tabRows),
+    loadVisitors(),
+  ]);
   const mc = mcs.find((m) => m.id === mcId);
   const me = findByTelegramId(visitors, ctx.from.id);
   if (!mc) return ctx.answerCallbackQuery();
@@ -381,7 +394,10 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
           ? M.mcAlready
           : M.mcSlotTaken,
   );
-  if (result === "ok") await ctx.reply(M.mcRegistered(mc.title, slot, mc.place));
+  if (result === "ok") {
+    const topic = topics.get(`${date}|${mcId}`);
+    await ctx.reply(M.mcRegistered(mc.title, slot, mc.place, topic));
+  }
   if (result === "slot_taken") await ctx.reply(M.mcSlotTaken);
 });
 
