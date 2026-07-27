@@ -39,6 +39,7 @@ export const config = {
   adminsTab: "Admins",
   leadersTab: "Leaders",
   videosTab: "Videos",
+  phishCatchesTab: "PhishCatches",
 
   defaultVideoFileId: process.env.DEFAULT_VIDEO_FILE_ID ?? "",
   timeZone: "Europe/Kyiv",
