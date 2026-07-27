@@ -185,6 +185,12 @@ export const M = {
     `Учасникам якого майстер-класу надіслати «${text}»?`,
   mcNotifySent: (sent: number, total: number, title: string, slot: string) =>
     `Надіслано ${sent}/${total} учасникам «${title}» (${slot}) ✅`,
+
+  // Phishing awareness
+  phishCaught: "🎣 Ви попались! Це був навчальний фішинг — обговоримо це на майстер-класі.",
+  caughtHeader: (title: string, slot: string) => `Спіймані на «${title}» (${slot}):`,
+  noCatches: "— поки ніхто не попався",
+  caughtChoose: "Результати якого майстер-класу показати?",
 };
 
 /** Composes the post-registration / `/help` capability message from a person's full
