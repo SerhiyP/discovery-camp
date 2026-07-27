@@ -228,7 +228,7 @@ bot.callbackQuery("checkanya", async (ctx) => {
   const me = findByTelegramId(visitors, ctx.from.id);
   if (!me) return ctx.answerCallbackQuery(M.mustCheckInFirst);
   if (!me.doctorStatus || !me.paymentStatus) {
-    return ctx.answerCallbackQuery(M.anyaNotYet);
+    return ctx.answerCallbackQuery({ text: M.anyaNotYet, show_alert: true });
   }
   await ctx.answerCallbackQuery();
   await ctx.deleteMessage();
