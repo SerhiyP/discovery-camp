@@ -49,6 +49,7 @@ import {
   removeResponsibleByRow,
   searchResponsibleByName,
 } from "./responsible";
+import { logCatch } from "./phishing";
 
 export const bot = new Bot(config.botToken);
 
@@ -91,6 +92,10 @@ bot.command("start", async (ctx) => {
   const payload = (ctx.match ?? "").trim();
   const medMatch = /^med_(\d+)$/.exec(payload);
   if (medMatch) return handleDoctorScan(ctx, Number(medMatch[1]));
+  if (payload === "caught") {
+    await logCatch(String(ctx.from!.id));
+    return ctx.reply(M.phishCaught);
+  }
 
   const { visitors } = await loadVisitors();
   const me = findByTelegramId(visitors, ctx.from!.id);
