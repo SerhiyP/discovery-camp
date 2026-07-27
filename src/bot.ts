@@ -1,4 +1,5 @@
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
+import type { MessageEntity } from "grammy/types";
 import QRCode from "qrcode";
 import { config, nowStamp, todayISO } from "./config";
 import { updateCell } from "./sheets";
@@ -770,14 +771,34 @@ async function handleMcAttendees(ctx: Context) {
   return ctx.reply(lines.join("\n").trimEnd());
 }
 
-async function notifyOccurrence(ctx: Context, o: MCOccurrence, text: string) {
+/** Entities fully contained in [offset, offset+length) of the original text,
+ *  rebased to start at 0 — e.g. a text_link entity over the command's payload
+ *  survives being re-sent as a standalone message. Entities that start before
+ *  `offset` (like the command's own `bot_command` entity) are dropped. */
+function sliceEntities(
+  entities: MessageEntity[] | undefined,
+  offset: number,
+  length: number,
+): MessageEntity[] {
+  if (!entities) return [];
+  return entities
+    .filter((e) => e.offset >= offset && e.offset + e.length <= offset + length)
+    .map((e) => ({ ...e, offset: e.offset - offset }));
+}
+
+async function notifyOccurrence(
+  ctx: Context,
+  o: MCOccurrence,
+  text: string,
+  entities?: MessageEntity[],
+) {
   const regs = await loadMCRegistrations();
   const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
   const ids = [...new Set(taken.map((r) => r.telegramId))];
   let sent = 0;
   for (const id of ids) {
     try {
-      await bot.api.sendMessage(id, text);
+      await bot.api.sendMessage(id, text, { entities });
       sent++;
     } catch {
       // user blocked the bot or never started it
@@ -792,7 +813,14 @@ bot.command("notifymc", async (ctx) => {
   const occ = await myOccurrencesToday(ctx.from!.id);
   if (occ === null) return ctx.reply(M.notResponsible);
   if (occ.length === 0) return ctx.reply(M.noMyMcToday);
-  if (occ.length === 1) return notifyOccurrence(ctx, occ[0], text);
+  // Responsible people run exactly one MC per day, so this is always occ.length === 1
+  // in practice — the picker below is a defensive fallback for multiple occurrences,
+  // and (unlike this path) doesn't preserve rich-text entities like links.
+  if (occ.length === 1) {
+    const payloadOffset = (ctx.message?.text ?? "").length - ctx.match.length;
+    const entities = sliceEntities(ctx.message?.entities, payloadOffset, text.length);
+    return notifyOccurrence(ctx, occ[0], text, entities);
+  }
   const kb = new InlineKeyboard();
   occ.forEach((o, i) => kb.text(`${o.mc.title} (${o.slot})`, `mn:${i}`).row());
   return ctx.reply(M.mcNotifyChoose(text), { reply_markup: kb });
