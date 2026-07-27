@@ -49,7 +49,7 @@ import {
   removeResponsibleByRow,
   searchResponsibleByName,
 } from "./responsible";
-import { logCatch } from "./phishing";
+import { loadCatches, logCatch } from "./phishing";
 
 export const bot = new Bot(config.botToken);
 
@@ -810,6 +810,44 @@ bot.callbackQuery(/^mn:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.deleteMessage();
   return notifyOccurrence(ctx, o, textMatch[1]);
+});
+
+async function renderCaught(ctx: Context, o: MCOccurrence) {
+  const [regs, catches] = await Promise.all([loadMCRegistrations(), loadCatches()]);
+  const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+  const earliestByTelegramId = new Map<string, string>();
+  for (const c of catches) {
+    const existing = earliestByTelegramId.get(c.telegramId);
+    if (!existing || c.caughtAt < existing) earliestByTelegramId.set(c.telegramId, c.caughtAt);
+  }
+  const caught = taken
+    .filter((r) => earliestByTelegramId.has(r.telegramId))
+    .map((r) => ({ name: r.name, caughtAt: earliestByTelegramId.get(r.telegramId)! }))
+    .sort((a, b) => a.caughtAt.localeCompare(b.caughtAt));
+  const lines = [M.caughtHeader(o.mc.title, o.slot)];
+  if (caught.length === 0) lines.push(M.noCatches);
+  else for (const c of caught) lines.push(`• ${c.name} — ${c.caughtAt}`);
+  return ctx.reply(lines.join("\n"));
+}
+
+bot.command("caught", async (ctx) => {
+  const occ = await myOccurrencesToday(ctx.from!.id);
+  if (occ === null) return ctx.reply(M.notResponsible);
+  if (occ.length === 0) return ctx.reply(M.noMyMcToday);
+  if (occ.length === 1) return renderCaught(ctx, occ[0]);
+  const kb = new InlineKeyboard();
+  occ.forEach((o, i) => kb.text(`${o.mc.title} (${o.slot})`, `cn:${i}`).row());
+  return ctx.reply(M.caughtChoose, { reply_markup: kb });
+});
+
+bot.callbackQuery(/^cn:(\d+)$/, async (ctx) => {
+  const idx = Number(ctx.match[1]);
+  const occ = await myOccurrencesToday(ctx.from.id);
+  const o = occ?.[idx];
+  await ctx.answerCallbackQuery();
+  if (!o) return ctx.editMessageText(M.noMyMcToday);
+  await ctx.deleteMessage();
+  return renderCaught(ctx, o);
 });
 
 // --- keyboard button handlers (must be before message:text catch-all) ---
