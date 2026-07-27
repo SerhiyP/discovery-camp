@@ -95,9 +95,10 @@ bot.command("start", async (ctx) => {
   if (payload === "caught") {
     try {
       await logCatch(String(ctx.from!.id));
-    } catch {
+    } catch (err) {
       // A failed sheet write shouldn't stop the reveal reply — many people click this link
       // within the same minute, and Sheets can hiccup under that burst.
+      console.error("phishing: logCatch failed", err);
     }
     return ctx.reply(M.phishCaught);
   }
