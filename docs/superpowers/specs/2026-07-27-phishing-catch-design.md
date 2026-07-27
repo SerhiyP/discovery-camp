@@ -106,7 +106,7 @@ export async function loadCatches(): Promise<PhishCatch[]> {
 ## `src/messages.ts`
 
 ```ts
-phishCaught: "🎣 Ви потрапились! Це був навчальний фішинг — обговоримо це на майстер-класі.",
+phishCaught: "🎣 Ви попались! Це був навчальний фішинг — обговоримо це на майстер-класі.",
 caughtHeader: (title: string, slot: string) => `Спіймані на «${title}» (${slot}):`,
 noCatches: "— поки ніхто не попався",
 ```
