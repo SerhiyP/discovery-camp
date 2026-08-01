@@ -4,6 +4,8 @@ export const BTN = {
   masterclasses: "🎨 Майстер-класи",
   schedule: "🗓 Розклад",
   myRegs: "📋 Мої реєстрації",
+  teamRoster: "👥 Моя команда",
+  teamMc: "🎨 МК команди",
   notifyTeam: "📢 Сповістити команду",
   renameTeam: "✏️ Перейменувати команду",
   mcAttendees: "👥 Учасники МК",
@@ -19,6 +21,7 @@ export function roleKeyboard(
     .text(BTN.masterclasses).text(BTN.schedule).row()
     .text(BTN.myRegs);
   if (opts.leader) {
+    kb.row().text(BTN.teamRoster).text(BTN.teamMc);
     kb.row().text(BTN.notifyTeam).row().text(BTN.renameTeam);
   }
   if (opts.responsible) {

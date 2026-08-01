@@ -12,6 +12,7 @@ import {
   searchByName,
   updateTeamVideo,
   videoForTeam,
+  visitorsByTeam,
 } from "./checkin";
 import {
   activeRegs,
@@ -814,6 +815,33 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
   return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
 });
 
+// --- leader team views ---
+
+/** Distinct teams the caller leads, in Leaders-sheet order.
+ *  Returns null if the caller is not a leader. */
+async function myLedTeams(telegramId: number): Promise<string[] | null> {
+  const { leaders } = await loadLeaders();
+  const mine = findLeadersByTelegramId(leaders, telegramId);
+  if (mine.length === 0) return null;
+  return [...new Set(mine.map((l) => l.team))];
+}
+
+async function handleTeamRoster(ctx: Context) {
+  const teams = await myLedTeams(ctx.from!.id);
+  if (!teams) return ctx.reply(M.notLeader);
+  const { visitors } = await loadVisitors();
+  const lines: string[] = [];
+  for (const team of teams) {
+    const members = visitorsByTeam(visitors, team);
+    lines.push(M.teamRosterHeader(team, members.length), "");
+    if (members.length === 0) lines.push(M.teamEmpty);
+    members.forEach((v, i) => lines.push(M.teamRosterLine(i + 1, v.name, v.age)));
+    lines.push("");
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return replyChunked(ctx, lines);
+}
+
 // --- responsible tools ---
 
 interface MCOccurrence {
@@ -978,6 +1006,7 @@ bot.callbackQuery(/^cn:(\d+)$/, async (ctx) => {
 bot.hears(BTN.masterclasses, handleMasterclasses);
 bot.hears(BTN.schedule, handleSchedule);
 bot.hears(BTN.myRegs, handleMyRegs);
+bot.hears(BTN.teamRoster, handleTeamRoster);
 bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
 bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
 bot.hears(BTN.mcAttendees, handleMcAttendees);

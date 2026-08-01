@@ -4,6 +4,15 @@ const GENERAL_INFO =
   "🗓 дивитись розклад табору\n" +
   "📋 бачити свої реєстрації";
 
+/** Ukrainian count agreement: 1 учасник / 2-4 учасники / 5+ учасників. */
+function pluralUk(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
 export const M = {
   generalInfo: GENERAL_INFO,
   welcome:
@@ -177,6 +186,16 @@ export const M = {
   // Leader keyboard hints
   notifyTeamHint: "Напишіть команду з текстом:\n/notifyteam <ваше повідомлення>",
   renameTeamHint: "Напишіть команду з новою назвою:\n/renameteam <нова назва>",
+
+  // Leader team views
+  teamRosterHeader: (team: string, count: number) =>
+    `👥 Команда ${team} — ${count} ${pluralUk(count, "учасник", "учасники", "учасників")}`,
+  teamRosterLine: (n: number, name: string, age: string) =>
+    `${n}. ${name}${age ? ` — ${age} р.` : ""}`,
+  teamEmpty: "У команді немає учасників.",
+  teamMcHeader: (team: string) => `🎨 Команда ${team} — МК сьогодні`,
+  teamMcLine: (name: string, mc: string) => `• ${name} — ${mc}`,
+  teamMcNone: "без реєстрації",
 
   // Responsible tools
   notResponsible: "Ця функція доступна лише відповідальним за майстер-класи.",
