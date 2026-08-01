@@ -4,6 +4,7 @@ import { appendRow, getRows, headerIndex, updateCell } from "./sheets";
 export interface Visitor {
   rowIndex: number; // 0-based, including header row
   name: string;
+  age: string;
   paymentStatus: string;
   doctorStatus: string;
   team: string;
@@ -14,8 +15,9 @@ export interface Visitor {
 
 interface VisitorSheet {
   visitors: Visitor[];
-  cols: { 
+  cols: {
     name: number;
+    age: number;
     paymentStatus: number;
     doctorStatus: number;
     checkin: number;
@@ -32,6 +34,7 @@ export async function loadVisitors(): Promise<VisitorSheet> {
   const header = rows[0];
   const cols = {
     name:          headerIndex(header, config.nameHeader),
+    age:           headerIndex(header, config.age),
     paymentStatus: headerIndex(header, config.paymentStatusHeader),
     doctorStatus: headerIndex(header, config.doctorStatusHeader),
     checkin:       headerIndex(header, config.checkinHeader),
@@ -54,6 +57,7 @@ export async function loadVisitors(): Promise<VisitorSheet> {
     visitors.push({
       rowIndex: i,
       name,
+      age: cols.age >= 0 ? (row[cols.age] ?? "").trim() : "",
       paymentStatus: cols.paymentStatus >= 0 ? (row[cols.paymentStatus] ?? "").trim() : "",
       doctorStatus: cols.doctorStatus >= 0 ? (row[cols.doctorStatus] ?? "").trim() : "",
       team: cols.team >= 0 ? (row[cols.team] ?? "").trim() : "",
@@ -103,6 +107,15 @@ export function findByTelegramId(
   telegramId: number,
 ): Visitor | undefined {
   return visitors.find((v) => v.telegramId === String(telegramId));
+}
+
+/** Members of one team, sorted by name. Team values are compared trimmed and
+ *  case-insensitively — same match as /notifyteam. */
+export function visitorsByTeam(visitors: Visitor[], team: string): Visitor[] {
+  const target = team.trim().toLowerCase();
+  return visitors
+    .filter((v) => v.team.trim().toLowerCase() === target)
+    .sort((a, b) => a.name.localeCompare(b.name, "uk"));
 }
 
 /**
