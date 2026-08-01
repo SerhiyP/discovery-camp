@@ -63,7 +63,7 @@ Four tiers, checked in order:
 
 1. **Superadmin** — Telegram IDs in `ADMIN_IDS` env var. Full access.
 2. **Admin** — rows in the `Admins` sheet. Can manage leaders and broadcast.
-3. **Leader** — rows in the `Leaders` sheet. Can notify team, rename team, set team video.
+3. **Leader** — rows in the `Leaders` sheet. Can view their team roster (name + age) and their team's masterclass registrations for today, notify team, rename team, set team video.
 4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees, and reveal same-day phishing-training catches via `/caught` (typed-only, no menu entry — same precedent as `/notifymc`). Independent of the leader role; a person can hold both, but each role must be claimed through its own command (`/leader`, `/responsible`) — the bot never offers them together.
 
 ### Reply keyboards
@@ -73,7 +73,7 @@ Shown automatically after check-in/link; also restored on `/start` for linked us
 | Role | Buttons |
 |---|---|
 | Visitor | `🎨 Майстер-класи` · `🗓 Розклад` · `📋 Мої реєстрації` |
-| Leader | Visitor buttons + `📢 Сповістити команду` · `✏️ Перейменувати команду` |
+| Leader | Visitor buttons + `👥 Моя команда` · `🎨 МК команди` · `📢 Сповістити команду` · `✏️ Перейменувати команду` |
 | Responsible | Visitor buttons + `👥 Учасники МК` · `📣 Сповістити учасників МК` (stacks with leader rows) |
 
 The default Telegram command menu (`Меню` button) is cleared for regular users — admins/superadmins keep scoped command menus.
@@ -91,3 +91,4 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
 - **Admin delete-by-name commands prefer button pickers over typed exact names** — see `/delresp` (`src/bot.ts`): lists candidates as buttons grouped by category, with a confirm step before the actual delete. Apply the same shape if `/removeleader`/`/removeadmin` are revisited.
 - **No global `bot.catch`**: an uncaught handler error becomes an HTTP 500, which Telegram retries as the same update. Handlers whose reply could exceed Telegram's ~4096-char message limit at scale (e.g. `/syncresp`'s per-name report) should chunk their output (see `replyChunked` in `src/bot.ts`) rather than risk this.
 - Check-in sends a short role-capability follow-up message after the confirmation; `/help` shows the same info on demand.
+- **Leader team views are read-only and button-only** — `👥 Моя команда` and `🎨 МК команди` have no slash-command equivalent and no command-menu entry, because neither takes an argument. The team↔visitor join is `Leaders.Team` against the visitor's `Номер команди` cell (trimmed, case-insensitive); the member↔registration join is `EventRegs.Telegram ID`, so a member with no active registration for a given slot (including one who never checked in) reads `без реєстрації`.
