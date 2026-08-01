@@ -192,8 +192,8 @@ export const M = {
   // Leader team views
   teamRosterHeader: (team: string, count: number) =>
     `👥 Команда ${team} — ${count} ${pluralUk(count, "учасник", "учасники", "учасників")}`,
-  teamRosterLine: (n: number, name: string, age: string) =>
-    `${n}. ${name}${age ? ` — ${age} р.` : ""}`,
+  teamRosterLine: (n: number, name: string, age: string, room: string) =>
+    `${n}. ${name}${age ? ` — ${age} р.` : ""}${room ? ` · 🚪 ${room}` : ""}`,
   teamEmpty: "У команді немає учасників.",
   teamMcHeader: (team: string) => `🎨 Команда ${team} — МК сьогодні`,
   teamMcLine: (name: string, mc: string) => `• ${name} — ${mc}`,

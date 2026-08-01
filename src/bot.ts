@@ -844,7 +844,7 @@ async function handleTeamRoster(ctx: Context) {
     const members = visitorsByTeam(visitors, team);
     lines.push(M.teamRosterHeader(team, members.length), "");
     if (members.length === 0) lines.push(M.teamEmpty);
-    members.forEach((v, i) => lines.push(M.teamRosterLine(i + 1, v.name, v.age)));
+    members.forEach((v, i) => lines.push(M.teamRosterLine(i + 1, v.name, v.age, v.room)));
     lines.push("");
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
