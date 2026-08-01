@@ -33,15 +33,15 @@ reject a row belonging to a different account with `M.rowTaken` (`src/bot.ts:253
 
 ### 1. `/leader` — gated leader linking
 
-`bot.command("leader")` (`src/bot.ts:152-159`) keeps its already-linked guard and gains two
-entry shapes:
+`bot.command("leader")` (`src/bot.ts:152-159`) keeps its already-linked guard and takes the
+name as a command argument:
 
-- **`/leader <ПІБ>`** — arguments present: search Leaders immediately with that text.
-- **`/leader`** — bare: reply `M.leaderPrompt` with `reply_markup: { force_reply: true }`.
-  The user's reply is what carries the name.
+- **`/leader`** (bare) → reply `M.leaderPrompt`, reworded into a usage hint that shows the
+  exact command format.
+- **`/leader <ПІБ>`** → search Leaders with `ctx.match.trim()`.
 
-Both paths funnel into one helper that searches **only** `searchLeaderByName` and replies
-with the existing message shapes:
+The name-carrying path searches **only** `searchLeaderByName` and replies with the existing
+message shapes:
 
 - exactly one match → `M.confirmLeader(name, team)` + a single `link_leader:<rowIndex>`
   button;
@@ -52,12 +52,11 @@ The `link_leader:` callback (`src/bot.ts:238-273`) is unchanged.
 
 ### 2. `/responsible` — new, mirrors `/leader`
 
-New command with the identical two entry shapes (`/responsible <ПІБ>` and bare +
-`force_reply`), guarded by `findResponsibleByTelegramId` and searching only
-`searchResponsibleByName`:
+New command with the identical shape, guarded by `findResponsibleByTelegramId` and
+searching only `searchResponsibleByName`:
 
 - already linked → `M.respAlreadyLinked` (new message);
-- bare invocation → `M.respPrompt` (new message) with `force_reply`;
+- bare invocation → `M.respPrompt` (new message), a usage hint showing the command format;
 - one match → `M.confirmResp(name)` + `link_resp:<rowIndex>`;
 - several → `M.chooseYourself` + one `🎨 <name>` button per distinct person (keep the
   existing dedup-by-lowercased-name so one button links all of that person's MC rows);
@@ -69,22 +68,13 @@ The `link_resp:` callback (`src/bot.ts:275-302`) is unchanged, including its
 Typed-only, no slash-menu entry — same precedent as `/leader` and `/notifymc`
 (see `src/commands.ts:12-17`, where `/leader` is deliberately absent).
 
-### 3. Reply detection (stateless)
+### 3. Why the argument form, for both commands
 
-Vercel serverless keeps no session state, so the reply itself carries the context. In the
-existing `bot.on("message:text")` handler, before any search:
-
-```ts
-const repliedTo = ctx.message.reply_to_message?.text;
-if (repliedTo === M.leaderPrompt) return handleLeaderNameSearch(ctx, ctx.message.text);
-if (repliedTo === M.respPrompt) return handleRespNameSearch(ctx, ctx.message.text);
-```
-
-Comparing against the exact prompt strings is sufficient: both are fixed constants in
-`M`, and a `force_reply` prompt is the only message a user would be replying to with a
-name. This keeps a single text entry point, which is why the branch lives inside the
-existing handler rather than in a second `bot.on("message:text")` that would need
-`next()` chaining.
+Carrying the name in the command itself means each linking attempt is a single self-
+contained update. Nothing has to be remembered between messages — which matters on Vercel
+serverless, where no session state survives between updates — and the text handler needs
+no new branch at all. This is what keeps the change small: one guard plus one search per
+command, and a strict deletion in the generic handler.
 
 ### 4. Generic `message:text` handler
 
@@ -104,17 +94,30 @@ their name normally another time), never as one auto-combined offer.
 
 ## `src/messages.ts`
 
-Two new strings, placed next to the existing responsible block (`src/messages.ts:100-106`):
+`M.leaderPrompt` is reworded from "напишіть своє прізвище та ім'я" into a usage hint that
+names the command, since a bare message no longer reaches the leader search:
 
-```ts
-respPrompt:
-  "Це вхід для відповідальних за майстер-класи. Напишіть своє прізвище та ім'я — так, як вас зареєстрував адміністратор.",
-respAlreadyLinked: (name: string) =>
-  `Ви вже підключені як відповідальний за майстер-клас (${name}) ✅`,
+```
+Це вхід для лідерів команд. Надішліть команду разом зі своїм прізвищем та іменем — так, як вас зареєстрував адміністратор:
+
+/leader Прізвище Ім'я
 ```
 
-`M.leaderPrompt`, `M.confirmLeader`, `M.confirmResp`, `M.chooseYourself`,
-`M.leaderNotFound`, `M.respNotFound`, `M.leaderAlreadyLinked` are reused unchanged.
+Two new strings, placed next to the existing responsible block (`src/messages.ts:100-106`),
+`respPrompt` following the same usage-hint shape:
+
+```
+Це вхід для відповідальних за майстер-класи. Надішліть команду разом зі своїм прізвищем та іменем — так, як вас зареєстрував адміністратор:
+
+/responsible Прізвище Ім'я
+```
+
+```
+respAlreadyLinked(name) -> `Ви вже підключені як відповідальний за майстер-клас (${name}) ✅`
+```
+
+`M.confirmLeader`, `M.confirmResp`, `M.chooseYourself`, `M.leaderNotFound`,
+`M.respNotFound`, `M.leaderAlreadyLinked` are reused unchanged.
 
 ## No changes
 
@@ -150,17 +153,16 @@ respAlreadyLinked: (name: string) =>
 
 ## Edge cases
 
-- **User dismisses the `force_reply` composer** and types their name as a plain message:
-  it falls through to the visitor search, so they get a visitor result or `M.notFound`.
-  The `/leader <ПІБ>` / `/responsible <ПІБ>` argument form is the documented escape hatch,
-  which is why both entry shapes exist.
-- **Reply arrives after the row was claimed by someone else** in between: the search
-  returns no unlinked match → `M.leaderNotFound` / `M.respNotFound`; if the user replies to
-  a stale button, `link_leader:` / `link_resp:` still answer `M.rowTaken`.
+- **User sends a bare `/leader` and then their name as a separate message**: the name falls
+  through to the visitor search, so they get a visitor result or `M.notFound`. This is why
+  `M.leaderPrompt` must show the literal `/leader Прізвище Ім'я` format rather than saying
+  "напишіть своє прізвище та ім'я" — the old wording would now lead the user into exactly
+  this dead end.
+- **Row claimed by someone else between the search and the tap**: `link_leader:` /
+  `link_resp:` still answer `M.rowTaken`; a fresh `/leader <ПІБ>` returns
+  `M.leaderNotFound` / `M.respNotFound` because the search skips linked rows.
 - **Someone already linked as a visitor runs `/leader`**: allowed — the guard only blocks
   re-linking an *already-linked leader* account. This is the deliberate two-step path.
-- **Reply text matches a reply-keyboard button label**: `bot.hears` is registered before
-  the text handler and wins. Harmless — the user re-runs the command.
 - **Responsible person with several MC rows**: unchanged; one confirm button links all of
   their unlinked rows via `linkResponsibleRows`.
 
@@ -171,8 +173,9 @@ manual pass after `npx vercel --prod`:
 
 1. Type a known leader's name as a plain message → only visitor results (or `M.notFound`);
    **no** `👑` button appears.
-2. `/leader` → reply with that name → confirm button → linked, leader keyboard appears.
-3. `/responsible <ПІБ>` → confirm button → linked, responsible keyboard appears.
+2. Bare `/leader` → usage hint naming the `/leader Прізвище Ім'я` format.
+3. `/leader <ПІБ>` → confirm button → linked, leader keyboard appears. Likewise
+   `/responsible <ПІБ>` → linked, responsible keyboard appears.
 4. Re-run `/leader` while linked → `M.leaderAlreadyLinked`; re-run `/responsible` while
    linked → `M.respAlreadyLinked`.
 5. From a second account, `/leader` with the same now-claimed name → `M.leaderNotFound`.
