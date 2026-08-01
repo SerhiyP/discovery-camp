@@ -88,6 +88,15 @@ async function keyboardForUser(telegramId: number): Promise<import("grammy").Key
   return keyboardFromRoles(await getUserRoles(telegramId));
 }
 
+/** Reply to a role-gated button pressed by someone who no longer holds that role.
+ *  Telegram keeps reply keyboards on the client, so a keyboard sent while the user
+ *  was a leader/responsible survives their removal from the sheet until the bot
+ *  sends new markup — do that here so the stale buttons disappear on first press. */
+async function replyRoleRevoked(ctx: Context, text: string) {
+  const kb = await keyboardForUser(ctx.from!.id);
+  return ctx.reply(text, { reply_markup: kb ?? { remove_keyboard: true } });
+}
+
 // --- check-in ---
 
 bot.command("start", async (ctx) => {
@@ -828,14 +837,14 @@ async function myLedTeams(telegramId: number): Promise<string[] | null> {
 
 async function handleTeamRoster(ctx: Context) {
   const teams = await myLedTeams(ctx.from!.id);
-  if (!teams) return ctx.reply(M.notLeader);
+  if (!teams) return replyRoleRevoked(ctx, M.notLeader);
   const { visitors } = await loadVisitors();
   const lines: string[] = [];
   for (const team of teams) {
     const members = visitorsByTeam(visitors, team);
     lines.push(M.teamRosterHeader(team, members.length), "");
     if (members.length === 0) lines.push(M.teamEmpty);
-    members.forEach((v, i) => lines.push(M.teamRosterLine(i + 1, v.name, v.age)));
+    members.forEach((v, i) => lines.push(M.teamRosterLine(i + 1, v.name, v.age, v.room)));
     lines.push("");
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -844,7 +853,7 @@ async function handleTeamRoster(ctx: Context) {
 
 async function handleTeamMc(ctx: Context) {
   const teams = await myLedTeams(ctx.from!.id);
-  if (!teams) return ctx.reply(M.notLeader);
+  if (!teams) return replyRoleRevoked(ctx, M.notLeader);
   const tabRows = await loadMCTabRows();
   const slots = todaySlots(await loadMCSchedule(tabRows));
   if (slots.length === 0) return ctx.reply(M.noMasterclassesToday);
@@ -915,7 +924,7 @@ async function myOccurrencesToday(telegramId: number): Promise<MCOccurrence[] | 
 
 async function handleMcAttendees(ctx: Context) {
   const occ = await myOccurrencesToday(ctx.from!.id);
-  if (occ === null) return ctx.reply(M.notResponsible);
+  if (occ === null) return replyRoleRevoked(ctx, M.notResponsible);
   if (occ.length === 0) return ctx.reply(M.noMyMcToday);
   const regs = await loadMCRegistrations();
   const lines: string[] = [];
@@ -1050,10 +1059,24 @@ bot.hears(BTN.schedule, handleSchedule);
 bot.hears(BTN.myRegs, handleMyRegs);
 bot.hears(BTN.teamRoster, handleTeamRoster);
 bot.hears(BTN.teamMc, handleTeamMc);
-bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
-bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
+// The hint-only buttons still check the role, so a revoked leader/responsible gets
+// their keyboard refreshed instead of a hint for a command they can no longer run.
+bot.hears(BTN.notifyTeam, async (ctx) =>
+  (await myLedTeams(ctx.from!.id))
+    ? ctx.reply(M.notifyTeamHint)
+    : replyRoleRevoked(ctx, M.notLeader),
+);
+bot.hears(BTN.renameTeam, async (ctx) =>
+  (await myLedTeams(ctx.from!.id))
+    ? ctx.reply(M.renameTeamHint)
+    : replyRoleRevoked(ctx, M.notLeader),
+);
 bot.hears(BTN.mcAttendees, handleMcAttendees);
-bot.hears(BTN.mcNotify, (ctx) => ctx.reply(M.mcNotifyHint));
+bot.hears(BTN.mcNotify, async (ctx) =>
+  (await getUserRoles(ctx.from!.id)).isResponsible
+    ? ctx.reply(M.mcNotifyHint)
+    : replyRoleRevoked(ctx, M.notResponsible),
+);
 
 // --- name search (must be after commands) ---
 
