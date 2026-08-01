@@ -842,6 +842,48 @@ async function handleTeamRoster(ctx: Context) {
   return replyChunked(ctx, lines);
 }
 
+async function handleTeamMc(ctx: Context) {
+  const teams = await myLedTeams(ctx.from!.id);
+  if (!teams) return ctx.reply(M.notLeader);
+  const tabRows = await loadMCTabRows();
+  const slots = todaySlots(await loadMCSchedule(tabRows));
+  if (slots.length === 0) return ctx.reply(M.noMasterclassesToday);
+  const mcs = await loadMasterclasses(tabRows);
+  const regs = await loadMCRegistrations();
+  const { visitors } = await loadVisitors();
+
+  const lines: string[] = [];
+  for (const team of teams) {
+    const members = visitorsByTeam(visitors, team);
+    lines.push(M.teamMcHeader(team), "");
+    if (members.length === 0) {
+      lines.push(M.teamEmpty, "");
+      continue;
+    }
+    for (const s of slots) {
+      lines.push(s.slot);
+      for (const v of members) {
+        const reg = v.telegramId
+          ? regs.find(
+              (r) =>
+                r.date === s.date &&
+                r.slot === s.slot &&
+                r.telegramId === v.telegramId &&
+                !r.cancelled,
+            )
+          : undefined;
+        // An unknown MC ID (catalog row deleted) reads as "без реєстрації"
+        // rather than leaking a bare numeric ID to the leader.
+        const title = reg ? mcs.find((m) => m.id === reg.mcId)?.title : undefined;
+        lines.push(M.teamMcLine(v.name, title ?? M.teamMcNone));
+      }
+      lines.push("");
+    }
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return replyChunked(ctx, lines);
+}
+
 // --- responsible tools ---
 
 interface MCOccurrence {
@@ -1007,6 +1049,7 @@ bot.hears(BTN.masterclasses, handleMasterclasses);
 bot.hears(BTN.schedule, handleSchedule);
 bot.hears(BTN.myRegs, handleMyRegs);
 bot.hears(BTN.teamRoster, handleTeamRoster);
+bot.hears(BTN.teamMc, handleTeamMc);
 bot.hears(BTN.notifyTeam, (ctx) => ctx.reply(M.notifyTeamHint));
 bot.hears(BTN.renameTeam, (ctx) => ctx.reply(M.renameTeamHint));
 bot.hears(BTN.mcAttendees, handleMcAttendees);
