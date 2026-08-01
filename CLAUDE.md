@@ -10,7 +10,7 @@ npm run qr               # Generate checkin-qr.png (requires BOT_USERNAME in .en
 npm run set-webhook      # Register Vercel deployment as Telegram webhook
 ```
 
-There are no tests and no local dev server — the bot runs exclusively as a Vercel serverless function. To deploy:
+There are no tests, but `npm run dev` runs a local long-polling dev server (`scripts/dev.ts`) for manual testing — it loads the same `.env`, so point it at a test bot token and a scratch spreadsheet, not the live camp data. In production the bot runs as a Vercel serverless function. To deploy:
 
 ```bash
 npx vercel --prod
@@ -51,7 +51,7 @@ All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 - **`RESPONSES_TAB`** (default: `Form Responses 1`) — Google Form responses; bot adds `Checked in` and `Telegram ID` columns to the right. Also reads `Команда` (team ID) and `Кімната` (room number) columns.
 - **`MCSchedule`** — one tab, two independent blocks side by side (fetched once via `loadMCTabRows` and parsed by both loaders). Left: schedule `Date | Slot | MC IDs` (date `YYYY-MM-DD`, slot shown verbatim, MC IDs comma-separated catalog `№` values). Keep `Slot` short (e.g. `12:00-13:00`) — it is embedded in button callback data (64-byte Telegram limit). Right: catalog `№ | Назва | Відповідальний | Місце проведення | Подарунки | Кількість учасників` (extra columns like `посилання на мапу` are ignored). The catalog header row is detected by `Місце проведення`; the title column falls back to `№`+1 because `E1:F1` are merged in the sheet (so `Назва` may be unreadable via the API). `№` like `1.` → ID `1`; capacity `без обмежень`/blank = unlimited; non-numeric-`№` rows are skipped.
 - **`EventRegs`** — `Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at` (bot-managed masterclass registrations; one active registration per user per date+slot).
-- **`MCResponsible`** — `MC ID | Name | Telegram ID | Added at` (bot-managed via `/addresp` or bulk-imported via `/syncresp`, which reads the catalog's `Відповідальний` column and splits multi-name cells on "і"/"й"/"та"/comma; linked at check-in by name like leaders). Removed via `/delresp`'s button picker, not by typed name.
+- **`MCResponsible`** — `MC ID | Name | Telegram ID | Added at` (bot-managed via `/addresp` or bulk-imported via `/syncresp`, which reads the catalog's `Відповідальний` column and splits multi-name cells on "і"/"й"/"та"/comma; linked by the person running `/responsible <ПІБ>`, not by typing a name at check-in). Removed via `/delresp`'s button picker, not by typed name.
 - **`Videos`** — `ID | Team | File ID | Type` for per-team leader videos. `ID` is a permanent numeric key; `Team` is a display name that can be renamed. `Type` is `video_note` or `video`.
 - **`Admins`** — `Telegram ID | Name` (bot-managed via `/addadmin`).
 - **`Leaders`** — `Team | Name | Telegram ID | Linked at` (bot-managed via `/addleader`). The `Team` column stores the **numeric ID** matching the `Videos.ID` column.

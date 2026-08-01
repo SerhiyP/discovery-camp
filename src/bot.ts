@@ -280,7 +280,23 @@ bot.callbackQuery("checkanya", async (ctx) => {
   await sendFinalMessage(ctx, me);
 });
 
+// Role-linking (👑/🎨) buttons stay valid in Telegram forever, so someone scrolling up in
+// old chat history could tap a button sent before this staleness guard existed. Rejecting
+// taps on messages older than this window forces a fresh /leader or /responsible run.
+const ROLE_LINK_MAX_AGE_MS = 10 * 60 * 1000;
+
+function isStaleRoleLinkTap(ctx: Context): boolean {
+  const messageDate = ctx.callbackQuery?.message?.date;
+  if (!messageDate) return true; // missing or inaccessible (date === 0): fail closed
+  return Date.now() - messageDate * 1000 > ROLE_LINK_MAX_AGE_MS;
+}
+
 bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
+  if (isStaleRoleLinkTap(ctx)) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.leaderPrompt);
+  }
+
   const rowIndex = Number(ctx.match[1]);
   const leaderSheet = await loadLeaders();
 
@@ -318,8 +334,19 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
+  if (isStaleRoleLinkTap(ctx)) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.respPrompt);
+  }
+
   const rowIndex = Number(ctx.match[1]);
   const sheet = await loadResponsible();
+
+  const already = findResponsibleByTelegramId(sheet.responsible, ctx.from.id);
+  if (already.length > 0) {
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(M.respAlreadyLinked(already[0].name));
+  }
 
   const row = sheet.responsible.find((r) => r.rowIndex === rowIndex);
   if (!row) {
