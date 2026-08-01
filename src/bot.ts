@@ -177,6 +177,32 @@ bot.command("leader", async (ctx) => {
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
 
+// Mirrors /leader. One person may run several masterclasses (several MCResponsible rows);
+// the dedup below shows one button per person, and link_resp: links all of their rows.
+bot.command("responsible", async (ctx) => {
+  const sheet = await loadResponsible();
+  const mine = findResponsibleByTelegramId(sheet.responsible, ctx.from!.id);
+  if (mine.length > 0) return ctx.reply(M.respAlreadyLinked(mine[0].name));
+
+  const query = ctx.match.trim();
+  if (!query) return ctx.reply(M.respPrompt);
+
+  const rows = searchResponsibleByName(sheet.responsible, query);
+  const matches = [...new Map(rows.map((r) => [r.name.toLowerCase(), r])).values()];
+  if (matches.length === 0) return ctx.reply(M.respNotFound);
+
+  const kb = new InlineKeyboard();
+  if (matches.length === 1) {
+    const r = matches[0];
+    kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
+    return ctx.reply(M.confirmResp(r.name), { reply_markup: kb });
+  }
+  for (const r of matches) {
+    kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
+  }
+  return ctx.reply(M.chooseYourself, { reply_markup: kb });
+});
+
 bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   const rowIndex = Number(ctx.match[1]);
   const sheet = await loadVisitors();
