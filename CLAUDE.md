@@ -64,7 +64,7 @@ Four tiers, checked in order:
 1. **Superadmin** — Telegram IDs in `ADMIN_IDS` env var. Full access.
 2. **Admin** — rows in the `Admins` sheet. Can manage leaders and broadcast.
 3. **Leader** — rows in the `Leaders` sheet. Can notify team, rename team, set team video.
-4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees, and reveal same-day phishing-training catches via `/caught` (typed-only, no menu entry — same precedent as `/notifymc`). Independent of the leader role; a person can hold both.
+4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees, and reveal same-day phishing-training catches via `/caught` (typed-only, no menu entry — same precedent as `/notifymc`). Independent of the leader role; a person can hold both, but each role must be claimed through its own command (`/leader`, `/responsible`) — the bot never offers them together.
 
 ### Reply keyboards
 
@@ -82,7 +82,7 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
 
 - **No database transactions**: concurrent registrations have a small race window — acceptable for camp scale.
 - **Row indices are 0-based** (including header row) in `sheets.ts`; cell addresses add 1 when building A1 notation.
-- **Name search** (`checkin.ts:searchByName`) normalizes apostrophes/case and matches each query word as a prefix against any name word — order-independent, returns top 5.
+- **Name search** (`checkin.ts:searchByName`) normalizes apostrophes/case and matches each query word as a prefix against any name word — order-independent, returns top 5. Only the Visitors sheet is searched this way — leader and responsible linking is command-gated behind `/leader <ПІБ>` and `/responsible <ПІБ>` so a typed name can never surface someone else's role.
 - **Videos lookup**: keyed by `Videos.ID` (exact string match). The `Leaders.team` column must store the numeric ID (e.g. `1`), not the display name. `updateTeamVideo` returns `false` if the ID isn't found.
 - **video_note vs video**: `Videos.Type` column holds `video_note` or `video`. Bot uses `replyWithVideoNote` or `replyWithVideo` accordingly.
 - **Video file_id discovery**: admin or leader sends a video/video_note to the bot → superadmin/admin gets the `file_id` echoed; leader gets their team video updated automatically.
