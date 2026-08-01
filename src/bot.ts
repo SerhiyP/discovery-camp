@@ -967,45 +967,26 @@ bot.on("message:text", async (ctx) => {
 
   const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
   const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
+  const meResponsible = findResponsibleByTelegramId(respSheet.responsible, ctx.from.id);
 
-  // Always search unlinked leader/responsible entries — a visitor can also hold those roles.
-  const leaderMatches = searchLeaderByName(leaderSheet.leaders, ctx.message.text);
-  const respRows = searchResponsibleByName(respSheet.responsible, ctx.message.text);
-  // One button per distinct person: the link_resp handler links all their rows at once.
-  const respMatches = [...new Map(respRows.map((r) => [r.name.toLowerCase(), r])).values()];
-  // Only search visitors if not yet linked as one.
+  // Only visitors are searched here — leader/responsible linking is command-gated behind
+  // /leader and /responsible, so a typed name can never offer someone else's role.
   const visitorMatches = meVisitor ? [] : searchByName(sheet.visitors, ctx.message.text);
 
-  if (visitorMatches.length === 0 && leaderMatches.length === 0 && respMatches.length === 0) {
-    if (meLeader.length > 0) return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
+  if (visitorMatches.length === 0) {
+    if (meLeader.length > 0)
+      return ctx.reply(M.leaderAlreadyLinked(meLeader[0].name, meLeader[0].team));
+    if (meResponsible.length > 0) return ctx.reply(M.respAlreadyLinked(meResponsible[0].name));
     if (meVisitor) return ctx.reply(M.alreadyLinked(meVisitor.name));
     return ctx.reply(M.notFound);
   }
 
   const kb = new InlineKeyboard();
-
-  if (visitorMatches.length === 1 && leaderMatches.length === 0 && respMatches.length === 0) {
+  if (visitorMatches.length === 1) {
     kb.text(visitorMatches[0].name, `link:${visitorMatches[0].rowIndex}`).row();
     return ctx.reply(M.confirmOne, { reply_markup: kb });
   }
-
-  if (leaderMatches.length === 1 && visitorMatches.length === 0 && respMatches.length === 0) {
-    const l = leaderMatches[0];
-    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
-    return ctx.reply(M.confirmLeader(l.name, l.team), { reply_markup: kb });
-  }
-
-  if (respMatches.length === 1 && visitorMatches.length === 0 && leaderMatches.length === 0) {
-    const r = respMatches[0];
-    kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
-    return ctx.reply(M.confirmResp(r.name), { reply_markup: kb });
-  }
-
   for (const v of visitorMatches) kb.text(v.name, `link:${v.rowIndex}`).row();
-  for (const l of leaderMatches)
-    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
-  for (const r of respMatches) kb.text(`🎨 ${r.name}`, `link_resp:${r.rowIndex}`).row();
-
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
 
