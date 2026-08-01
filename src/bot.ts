@@ -149,13 +149,32 @@ bot.command("help", async (ctx) => {
   return ctx.reply(roleCapabilitiesText(roles));
 });
 
+// Leader linking is command-gated: the name arrives as the command argument, so a plain
+// text message never searches the Leaders table. See docs/superpowers/specs/2026-08-01-*.
 bot.command("leader", async (ctx) => {
   const { leaders } = await loadLeaders();
   const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
   if (mine.length > 0) {
     return ctx.reply(M.leaderAlreadyLinked(mine[0].name, mine[0].team));
   }
-  return ctx.reply(M.leaderPrompt);
+
+  const query = ctx.match.trim();
+  if (!query) return ctx.reply(M.leaderPrompt);
+
+  // searchLeaderByName only returns rows that nobody has claimed yet.
+  const matches = searchLeaderByName(leaders, query);
+  if (matches.length === 0) return ctx.reply(M.leaderNotFound);
+
+  const kb = new InlineKeyboard();
+  if (matches.length === 1) {
+    const l = matches[0];
+    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+    return ctx.reply(M.confirmLeader(l.name, l.team), { reply_markup: kb });
+  }
+  for (const l of matches) {
+    kb.text(`👑 ${l.name} (${l.team})`, `link_leader:${l.rowIndex}`).row();
+  }
+  return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
 
 bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
