@@ -15,12 +15,14 @@ function pluralUk(n: number, one: string, few: string, many: string): string {
 
 export const M = {
   generalInfo: GENERAL_INFO,
-  welcome:
-    "Вітаємо в Discovery Camp! 🏕\n\n" +
-    `${GENERAL_INFO}\n\n` +
-    "Щоб почати, відмітьтесь на реєстрації — напишіть своє прізвище та ім'я, так, як ви вказували їх у формі реєстрації.",
+  // Sent together with askName as two separate messages — the ask is the only part
+  // that needs an action, so it gets its own bubble instead of trailing a wall of text.
+  welcome: "Вітаємо в Discovery Camp! 🏕\n\n" + GENERAL_INFO,
   alreadyLinked: (name: string) => `Ви вже відмічені як ${name} ✅`,
   askName: "Напишіть своє прізвище та ім'я — так, як у формі реєстрації.",
+  // Plain URL, no parse_mode — Telegram auto-links it. The channel is public despite
+  // the t.me/c/ form, so the link opens for non-members too (verified 2026-08-02).
+  infoChannel: "📢 Важлива інформація про табір:\nhttps://t.me/c/3954616904/266",
   chooseYourself: "Знайшли кілька збігів. Натисніть на своє ім'я 👇",
   confirmOne: "Це ви? Натисніть, щоб підтвердитись 👇",
   notFound:
@@ -41,7 +43,10 @@ export const M = {
   medNotAdmin: "Цей QR-код призначений для медичного персоналу.",
   medVisitorNotFound: "Не знайшли учасника 😔",
   medAlreadyDone: (name: string) => `У ${name} медогляд уже відмічено ✅`,
-  medMarked: (name: string) => `✅ ${name} — медогляд відмічено`,
+  // Shown to the doctor verbatim, filler answers included — a missing line would be
+  // ambiguous between "nothing to report" and "the bot dropped it".
+  medMarked: (name: string, needs: string) =>
+    `✅ ${name} — медогляд відмічено\n🩺 Особливі потреби: ${needs || "—"}`,
   anyaNotYet: "Аня ще не відмітила оплату 🙂 Зачекайте і спробуйте ще раз.",
   btnCheckAnya: "🔄 Я пройшов(ла) Аню",
   registrationComplete: (opts: { team?: string; leaders?: string; room?: string }) => {
@@ -192,8 +197,11 @@ export const M = {
   // Leader team views
   teamRosterHeader: (team: string, count: number) =>
     `👥 Команда ${team} — ${count} ${pluralUk(count, "учасник", "учасники", "учасників")}`,
-  teamRosterLine: (n: number, name: string, age: string, room: string) =>
-    `${n}. ${name}${age ? ` — ${age} р.` : ""}${room ? ` · 🚪 ${room}` : ""}`,
+  // `needs` is pre-filtered by isMeaningfulNeed() — a roster of "⚠️ Ні" lines would
+  // train leaders to skip the warnings that matter.
+  teamRosterLine: (n: number, name: string, age: string, room: string, needs: string) =>
+    `${n}. ${name}${age ? ` — ${age} р.` : ""}${room ? ` · 🚪 ${room}` : ""}` +
+    (needs ? `\n   ⚠️ ${needs}` : ""),
   teamEmpty: "У команді немає учасників.",
   teamMcHeader: (team: string) => `🎨 Команда ${team} — МК сьогодні`,
   teamMcLine: (name: string, mc: string) => `• ${name} — ${mc}`,

@@ -53,9 +53,9 @@ infoChannel:
   "https://t.me/c/3954616904/266",
 ```
 
-Plain URL, no `parse_mode` — Telegram auto-links it. The `t.me/c/` form is a
-private-channel link and only opens for people already in the channel; that is
-accepted as-is, since participants are added to the channel anyway.
+Plain URL, no `parse_mode` — Telegram auto-links it. The `t.me/c/` form usually
+means a private channel, but this one was checked and opens for non-members too,
+so no invite link is needed.
 
 Two call sites, deliberately formatted differently:
 

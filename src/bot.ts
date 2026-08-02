@@ -5,6 +5,7 @@ import { config, nowStamp, todayISO } from "./config";
 import { updateCell } from "./sheets";
 import {
   findByTelegramId,
+  isMeaningfulNeed,
   linkAndCheckIn,
   loadVisitors,
   renameTeamVideo,
@@ -120,7 +121,8 @@ bot.command("start", async (ctx) => {
   if (me) return ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
   // A leader/responsible who never checked in as a visitor still gets their keyboard —
   // /start is the one command everyone knows, so it must repair a missing one.
-  return ctx.reply(M.welcome, kb ? { reply_markup: kb } : {});
+  await ctx.reply(M.welcome, kb ? { reply_markup: kb } : {});
+  return ctx.reply(M.askName);
 });
 
 /** Admin scanned a participant's personal QR -> mark the medical exam and push the next step. */
@@ -136,7 +138,7 @@ async function handleDoctorScan(ctx: Context, targetId: number) {
   if (visitor.doctorStatus) return ctx.reply(M.medAlreadyDone(visitor.name));
 
   await updateCell(config.responsesTab, visitor.rowIndex, sheet.cols.doctorStatus, nowStamp());
-  await ctx.reply(M.medMarked(visitor.name));
+  await ctx.reply(M.medMarked(visitor.name, visitor.specialNeeds));
 
   try {
     await bot.api.sendMessage(targetId, M.medPassed, {
@@ -159,7 +161,10 @@ bot.command("help", async (ctx) => {
   // Roles are already loaded here, so send the matching keyboard along — this is how
   // someone whose role was added straight in the sheet picks up their buttons.
   const kb = keyboardFromRoles(roles);
-  return ctx.reply(roleCapabilitiesText(roles), kb ? { reply_markup: kb } : {});
+  return ctx.reply(
+    `${roleCapabilitiesText(roles)}\n\n${M.infoChannel}`,
+    kb ? { reply_markup: kb } : {},
+  );
 });
 
 // Leader linking is command-gated: the name arrives as the command argument, so a plain
@@ -278,6 +283,7 @@ async function sendFinalMessage(ctx: Context, visitor: { team: string; room: str
     kb ? { reply_markup: kb } : {},
   );
   await ctx.reply(roleCapabilitiesText(roles));
+  await ctx.reply(M.infoChannel);
 
   const video = await videoForTeam(visitor.team);
   if (video) {
@@ -856,7 +862,17 @@ async function handleTeamRoster(ctx: Context) {
     const members = visitorsByTeam(visitors, team);
     lines.push(M.teamRosterHeader(team, members.length), "");
     if (members.length === 0) lines.push(M.teamEmpty);
-    members.forEach((v, i) => lines.push(M.teamRosterLine(i + 1, v.name, v.age, v.room)));
+    members.forEach((v, i) =>
+      lines.push(
+        M.teamRosterLine(
+          i + 1,
+          v.name,
+          v.age,
+          v.room,
+          isMeaningfulNeed(v.specialNeeds) ? v.specialNeeds : "",
+        ),
+      ),
+    );
     lines.push("");
   }
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
