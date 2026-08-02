@@ -116,11 +116,11 @@ bot.command("start", async (ctx) => {
 
   const { visitors } = await loadVisitors();
   const me = findByTelegramId(visitors, ctx.from!.id);
-  if (me) {
-    const kb = await keyboardForUser(ctx.from!.id);
-    return ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
-  }
-  return ctx.reply(M.welcome);
+  const kb = await keyboardForUser(ctx.from!.id);
+  if (me) return ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
+  // A leader/responsible who never checked in as a visitor still gets their keyboard —
+  // /start is the one command everyone knows, so it must repair a missing one.
+  return ctx.reply(M.welcome, kb ? { reply_markup: kb } : {});
 });
 
 /** Admin scanned a participant's personal QR -> mark the medical exam and push the next step. */
@@ -156,7 +156,10 @@ bot.command("help", async (ctx) => {
   if (!roles.isVisitor && !roles.isLeader && !roles.isResponsible) {
     return ctx.reply(`${M.generalInfo}\n\n${M.mustCheckInFirst}`);
   }
-  return ctx.reply(roleCapabilitiesText(roles));
+  // Roles are already loaded here, so send the matching keyboard along — this is how
+  // someone whose role was added straight in the sheet picks up their buttons.
+  const kb = keyboardFromRoles(roles);
+  return ctx.reply(roleCapabilitiesText(roles), kb ? { reply_markup: kb } : {});
 });
 
 // Leader linking is command-gated: the name arrives as the command argument, so a plain
@@ -165,7 +168,13 @@ bot.command("leader", async (ctx) => {
   const { leaders } = await loadLeaders();
   const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
   if (mine.length > 0) {
-    return ctx.reply(M.leaderAlreadyLinked(mine[0].name, mine[0].team));
+    // Re-running /leader is what an already-linked leader tries when their buttons are
+    // missing, so answer with the keyboard rather than just the "already linked" text.
+    const kb = await keyboardForUser(ctx.from!.id);
+    return ctx.reply(
+      M.leaderAlreadyLinked(mine[0].name, mine[0].team),
+      kb ? { reply_markup: kb } : {},
+    );
   }
 
   const query = ctx.match.trim();
@@ -192,7 +201,10 @@ bot.command("leader", async (ctx) => {
 bot.command("responsible", async (ctx) => {
   const sheet = await loadResponsible();
   const mine = findResponsibleByTelegramId(sheet.responsible, ctx.from!.id);
-  if (mine.length > 0) return ctx.reply(M.respAlreadyLinked(mine[0].name));
+  if (mine.length > 0) {
+    const kb = await keyboardForUser(ctx.from!.id);
+    return ctx.reply(M.respAlreadyLinked(mine[0].name), kb ? { reply_markup: kb } : {});
+  }
 
   const query = ctx.match.trim();
   if (!query) return ctx.reply(M.respPrompt);
