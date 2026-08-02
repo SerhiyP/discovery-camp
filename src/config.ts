@@ -29,6 +29,7 @@ export const config = {
   doctorStatusHeader:  "Лікар",
   roomHeader:           "Кімната поселення",
   teamHeader:           "Номер команди",
+  specialNeedsHeader:   "Особливі потреби",
   checkinHeader:       "Checked in",
   telegramIdHeader:     "Telegram ID",
   age: 'вік',

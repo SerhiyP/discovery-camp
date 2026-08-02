@@ -9,6 +9,7 @@ export interface Visitor {
   doctorStatus: string;
   team: string;
   room: string;
+  specialNeeds: string;
   telegramId: string;
   checkedIn: string;
 }
@@ -23,7 +24,8 @@ interface VisitorSheet {
     checkin: number;
     telegramId: number;
     team: number;
-    room: number
+    room: number;
+    specialNeeds: number;
   };
 }
 
@@ -41,6 +43,7 @@ export async function loadVisitors(): Promise<VisitorSheet> {
     telegramId:    headerIndex(header, config.telegramIdHeader),
     team:          config.teamHeader ? headerIndex(header, config.teamHeader) : -1,
     room:          config.roomHeader ? headerIndex(header, config.roomHeader) : -1,
+    specialNeeds:  config.specialNeedsHeader ? headerIndex(header, config.specialNeedsHeader) : -1,
   };
   if (cols.name === -1)
     throw new Error(`Column "${config.nameHeader}" not found in "${config.responsesTab}"`);
@@ -62,6 +65,7 @@ export async function loadVisitors(): Promise<VisitorSheet> {
       doctorStatus: cols.doctorStatus >= 0 ? (row[cols.doctorStatus] ?? "").trim() : "",
       team: cols.team >= 0 ? (row[cols.team] ?? "").trim() : "",
       room: cols.room >= 0 ? (row[cols.room] ?? "").trim() : "",
+      specialNeeds: cols.specialNeeds >= 0 ? (row[cols.specialNeeds] ?? "").trim() : "",
       telegramId: (row[cols.telegramId] ?? "").trim(),
       checkedIn: (row[cols.checkin] ?? "").trim(),
     });
@@ -75,6 +79,35 @@ function normalize(s: string): string {
     .replace(/[’'ʼ`]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Answers to «Особливі потреби» that mean "nothing to report". Matched exactly
+ *  (after normalization), never as a substring — «Алергії не виявлено, потреба в
+ *  самодисципліні» opens with a filler phrase but carries real content after it. */
+const NEEDS_FILLER = new Set([
+  "",
+  "-",
+  "—",
+  "ні",
+  "нема",
+  "немає",
+  "не має",
+  "відсутні",
+  "відсутнє",
+  "не виявлено",
+  "ні немає",
+  "немає ніяких проблем",
+  "немає жодних проблем",
+]);
+
+/** True when a visitor's «Особливі потреби» cell says something a team leader
+ *  needs to know. Used to keep the roster readable — the doctor's scan shows the
+ *  raw value regardless, where a missing line would be ambiguous. */
+export function isMeaningfulNeed(value: string): boolean {
+  // Punctuation is stripped everywhere, not just at the end: the sheet holds both
+  // "Ні." and "Ні, немає", and only the comma-free form is worth listing above.
+  const normalized = normalize(value).replace(/[.,!?;:()"«»]/g, "").replace(/\s+/g, " ").trim();
+  return !NEEDS_FILLER.has(normalized);
 }
 
 /**
