@@ -1,7 +1,5 @@
 import { config, todayISO } from "./config";
-import { getRowsFromSpreadsheet } from "./sheets";
-
-const GRID_TAB = "3.Розклад табору 2026";
+import { getCampSlots } from "./mc-store";
 
 const CAMP_START = "2026-08-03";
 const CAMP_END   = "2026-08-07";
@@ -64,18 +62,12 @@ export async function loadTodaySchedule(): Promise<ScheduleResult> {
   const isToday = targetDate === today;
   const dayLabel = formatDayLabel(targetDate);
 
-  const rows = await getRowsFromSpreadsheet(config.gridSheetId, GRID_TAB);
-  if (rows.length < 3) return { status: "unavailable" };
-
-  // Collect non-empty slots from the badge schedule (col 8 = time, col 9 = activity).
-  const slots: ScheduleSlot[] = [];
-  for (let r = 2; r < rows.length; r++) {
-    const row = rows[r] ?? [];
-    const time = (row[8] ?? "").trim();
-    const activity = (row[9] ?? "").trim();
-    if (!time || !activity) continue;
-    slots.push({ time, activity, isCurrent: false });
-  }
+  const cached = await getCampSlots();
+  const slots: ScheduleSlot[] = cached.map((s) => ({
+    time: s.time,
+    activity: s.activity,
+    isCurrent: false,
+  }));
 
   if (slots.length === 0) return { status: "unavailable" };
 

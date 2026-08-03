@@ -55,6 +55,7 @@ import {
   getMCTopics,
   getRegistrations,
   registerMongo,
+  syncCampSchedule,
   syncMCFromSheets,
   unregisterMongo,
 } from "./mc-store";
@@ -578,7 +579,7 @@ async function handleMyRegs(ctx: Context) {
 }
 
 bot.command("mc", mongoGuarded(handleMasterclasses));
-bot.command("schedule", handleSchedule);
+bot.command("schedule", mongoGuarded(handleSchedule));
 bot.command("myevents", mongoGuarded(handleMyRegs));
 
 bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, mongoGuarded(async (ctx) => {
@@ -862,6 +863,17 @@ bot.command("syncvisitors", async (ctx) => {
     return ctx.reply(M.visitorsSynced(await syncVisitorsFromSheets()));
   } catch (err) {
     console.error("syncvisitors failed", err);
+    return ctx.reply(M.syncFailed);
+  }
+});
+
+bot.command("syncschedule", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  try {
+    return ctx.reply(M.scheduleSynced(await syncCampSchedule()));
+  } catch (err) {
+    console.error("syncschedule failed", err);
     return ctx.reply(M.syncFailed);
   }
 });
@@ -1238,7 +1250,7 @@ bot.callbackQuery(/^cn:(\d+)$/, mongoGuarded(async (ctx) => {
 // --- keyboard button handlers (must be before message:text catch-all) ---
 
 bot.hears(BTN.masterclasses, mongoGuarded(handleMasterclasses));
-bot.hears(BTN.schedule, handleSchedule);
+bot.hears(BTN.schedule, mongoGuarded(handleSchedule));
 bot.hears(BTN.myRegs, mongoGuarded(handleMyRegs));
 bot.hears(BTN.teamRoster, mongoGuarded(handleTeamRoster));
 bot.hears(BTN.teamMc, mongoGuarded(handleTeamMc));

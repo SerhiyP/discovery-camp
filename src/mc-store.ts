@@ -1,6 +1,7 @@
 import { Masterclass, SlotSchedule, loadMCTabRows, loadMasterclasses, loadMCSchedule, loadMCTopics, MCRegistration, RegisterResult } from "./masterclasses";
 import { COLLECTIONS, db } from "./mongo";
-import { nowStamp } from "./config";
+import { nowStamp, config } from "./config";
+import { getRowsFromSpreadsheet } from "./sheets";
 
 /** Re-imports the MCSchedule tab into Mongo. Replaces rather than upserts, so a row
  *  deleted from the sheet disappears here too. Sheets stays the source of truth for
@@ -72,6 +73,30 @@ export interface MongoRegistration {
 /** Creates the unique partial index that makes "one active registration per slot" a
  *  database guarantee. `active` is an explicit boolean rather than a `cancelledAt: null`
  *  predicate, because a filter on null also matches documents where the field is absent. */
+/** Imports the badge-grid schedule into Mongo. The grid applies no per-date filtering —
+ *  the same slot list serves every camp day — so it is a single document. */
+export async function syncCampSchedule(): Promise<number> {
+  if (!config.gridSheetId) return 0;
+  const rows = await getRowsFromSpreadsheet(config.gridSheetId, "3.Розклад табору 2026");
+  const slots: { time: string; activity: string }[] = [];
+  for (let r = 2; r < rows.length; r++) {
+    const row = rows[r] ?? [];
+    const time = (row[8] ?? "").trim();
+    const activity = (row[9] ?? "").trim();
+    if (!time || !activity) continue;
+    slots.push({ time, activity });
+  }
+  const col = (await db()).collection(COLLECTIONS.campSchedule);
+  await col.deleteMany({});
+  if (slots.length) await col.insertOne({ _id: "grid", slots } as never);
+  return slots.length;
+}
+
+export async function getCampSlots(): Promise<{ time: string; activity: string }[]> {
+  const doc = await (await db()).collection(COLLECTIONS.campSchedule).findOne({});
+  return ((doc?.slots as { time: string; activity: string }[]) ?? []);
+}
+
 export async function ensureIndexes(): Promise<void> {
   const database = await db();
   const regs = database.collection(COLLECTIONS.registrations);

@@ -176,6 +176,7 @@ export const M = {
   mcSynced: (mcs: number, slots: number, topics: number) =>
     `Каталог МК оновлено ✅\nМайстер-класів: ${mcs}, слотів: ${slots}, тем: ${topics}.`,
   visitorsSynced: (count: number) => `Учасників синхронізовано ✅\nЗаписів: ${count}.`,
+  scheduleSynced: (slots: number) => `Розклад табору оновлено ✅\nПунктів: ${slots}.`,
   syncFailed: "Не вдалося синхронізувати. Спробуйте ще раз за хвилину.",
   tryAgainLater: "Тимчасова помилка. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
