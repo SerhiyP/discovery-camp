@@ -35,7 +35,7 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `config.ts` | Env-var loading with required() guard; `todayISO()` and `nowStamp()` helpers (Kyiv timezone) |
 | `sheets.ts` | Thin Google Sheets API wrapper: `getRows`, `updateCell`, `appendRow`, `headerIndex` |
 | `checkin.ts` | Visitor search, name normalization, row-linking, check-in write, team video lookup |
-| `masterclasses.ts` | Masterclass catalog, per-day/slot schedule, and registration CRUD (`EventRegs` tab); `buildSlotButtons` builds the per-slot registration keyboard shared by `/mc` and the reminder cron |
+| `masterclasses.ts` | Masterclass catalog/schedule/topics parsing from the `MCSchedule` tab, plus the pure helpers (`buildSlotButtons`, `activeRegs`, `topicLines`, ...) shared by handlers and the reminder cron; registrations now live in `mc-store.ts` (Mongo) |
 | `responsible.ts` | Responsible-person CRUD, search, and linking (mirrors `leaders.ts`) |
 | `messages.ts` | All user-facing Ukrainian strings in one `M` object; also exports `roleCapabilitiesText()` for composing role-based capability messages |
 | `keyboards.ts` | Role-composed persistent reply keyboard (`roleKeyboard(opts)`, `BTN`) |
@@ -43,6 +43,9 @@ This is a **grammY Telegram bot** deployed on **Vercel serverless** with **Googl
 | `leaders.ts` | Leader CRUD, search, and linking |
 | `commands.ts` | Scoped Telegram command menus per role |
 | `phishing.ts` | Phishing-awareness training: `logCatch`/`loadCatches` against the `PhishCatches` tab |
+| `mongo.ts` | Serverless-safe shared Mongo client and `COLLECTIONS` |
+| `mc-store.ts` | Mongo store for the MC catalog/schedule/topics, registrations with atomic seat counters, camp-schedule cache, and the sync functions |
+| `visitor-store.ts` | Scoped visitors mirror for telegramId lookups (sync, lookup with Sheets fallback, check-in write-through) |
 
 ### Google Sheets schema
 
@@ -94,8 +97,9 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
   from active registrations. Check-in write-throughs to the mirror are best-effort. The
   Mongo client is created once per lambda and never at module scope. Every Mongo-backed
   handler goes through `mongoGuarded` (`src/bot.ts`) so an outage replies «спробуйте за
-  хвилину» instead of a 500 that Telegram redelivers. `MONGO_URI` unset means Mongo is not
-  configured; `/syncmc` will fail loudly.
+  хвилину» instead of a 500 that Telegram redelivers. `MONGO_URI` unset disables the whole
+  MC path and the schedule button (handlers reply «Тимчасова помилка» via `mongoGuarded`);
+  `/syncmc` fails loudly. There is no Sheets fallback.
 - **`answerCallbackQuery` must never abort a handler** — Telegram invalidates a callback query ~15s after the tap, so it fails routinely under load. Handlers that write to a sheet and then answer would leave the write committed, throw, return HTTP 500 and get redelivered onto a different branch (this is how check-ins were recorded with the QR never sent). All callback handlers answer through `safeAnswer()` (`bot.ts`), which logs instead of throwing, and the toast is never the only way a participant learns the outcome — send a real message too.
 - **Sheets reads are quota-bound and auto-batched** — Google allows 60 read *requests* per minute per user, and the service account is one "user" shared by the whole camp. `sheets.ts` collects every `getRows()` issued in the same tick into one `values.batchGet` (one request regardless of range count) and retries a 429 twice with backoff. Nothing is cached, so data is always fresh. The practical rule for handlers: **fetch tabs concurrently, never sequentially** — `await Promise.all([loadA(), loadB()])` costs one request, whereas `await loadA(); await loadB();` costs two. `loadRoleContext()` in `bot.ts` is the shared entry point for "who is this person" (visitor row + leader rows + responsible rows in one request); use it instead of re-loading a tab a handler already has. Bulk operations must never read or write inside a loop — see `addResponsibleMany` (`responsible.ts`), which replaced a per-name read+append in `/syncresp` that exhausted the quota on its own.
 - **Row indices are 0-based** (including header row) in `sheets.ts`; cell addresses add 1 when building A1 notation.
@@ -109,5 +113,5 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
 - **No global `bot.catch`**: an uncaught handler error becomes an HTTP 500, which Telegram retries as the same update. Handlers whose reply could exceed Telegram's ~4096-char message limit at scale (e.g. `/syncresp`'s per-name report) should chunk their output (see `replyChunked` in `src/bot.ts`) rather than risk this.
 - Check-in sends a short role-capability follow-up message after the confirmation; `/help` shows the same info on demand.
 - **«Особливі потреби» has two audiences with opposite filtering rules** — the doctor's QR-scan confirmation shows the raw cell always (a missing line would be ambiguous between "nothing to report" and "the bot dropped it"), while the leader roster shows it only when `isMeaningfulNeed()` (`checkin.ts`) rejects it as filler, since a column of `⚠️ Ні` trains leaders to skip the warnings that matter. The filler list matches whole normalized values, never substrings.
-- **Leader team views are read-only and button-only** — `👥 Моя команда` and `🎨 МК команди` have no slash-command equivalent and no command-menu entry, because neither takes an argument. The team↔visitor join is `Leaders.Team` against the visitor's `Номер команди` cell (trimmed, case-insensitive); the member↔registration join is `EventRegs.Telegram ID`, so a member with no active registration for a given slot (including one who never checked in) reads `без реєстрації`.
+- **Leader team views are read-only and button-only** — `👥 Моя команда` and `🎨 МК команди` have no slash-command equivalent and no command-menu entry, because neither takes an argument. The team↔visitor join is `Leaders.Team` against the visitor's `Номер команди` cell (trimmed, case-insensitive); the member↔registration join is the registration's `telegramId` in MongoDB, so a member with no active registration for a given slot (including one who never checked in) reads `без реєстрації`.
 - **Reply keyboards are client-side and go stale on role loss** — deleting a row from `Leaders`/`MCResponsible` does not remove the buttons from that person's Telegram; the client keeps the last markup the bot sent. Every role-gated button therefore re-checks the sheet and, when the role is gone, answers via `replyRoleRevoked` (`src/bot.ts`), which attaches the caller's current keyboard (or `remove_keyboard`) so the stale buttons vanish on first press. Any new role-gated button must do the same. The reverse also holds — a role *granted* outside the `/leader`/`/responsible` link flow (typed straight into the sheet, or claimed before reply keyboards existed) sends no markup either, so `/start`, `/help` and a repeat `/leader`/`/responsible` all attach the caller's current keyboard. Telling an existing leader to press `/start` is the supported way to hand out newly added buttons; there is no proactive push.

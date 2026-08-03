@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Telegram check-in bot for Discovery Camp (Vercel + Google Sheets)",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "tsx watch scripts/dev.ts",
     "typecheck": "tsc --noEmit",

@@ -20,7 +20,8 @@ export const config = {
   gridSheetId: process.env.GRID_SHEET_ID ?? "",
 
   // MongoDB — operational store for masterclasses, registrations and the camp schedule.
-  // Optional: when unset the bot keeps using Sheets for everything.
+  // Unset disables the MC path and the schedule button (handlers reply
+  // «Тимчасова помилка»); there is no Sheets fallback.
   mongoUri: process.env.MONGO_URI ?? "",
   mongoDb: process.env.MONGO_DB ?? "discovery_camp",
 
