@@ -138,7 +138,14 @@ bot.command("start", async (ctx) => {
   // One batched read covers both "is this person already linked?" and their keyboard.
   const { visitor: me, roles } = await loadRoleContext(ctx.from!.id);
   const kb = keyboardFromRoles(roles);
-  if (me) return ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
+  if (me) {
+    await ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
+    // Re-issue the doctor's QR while the medical exam is outstanding. This is the
+    // recovery route for a check-in whose first attempt wrote the row but died before
+    // sending the QR — /start is the one command every participant knows.
+    if (!me.doctorStatus) await sendMedQr(ctx);
+    return;
+  }
   // A leader/responsible who never checked in as a visitor still gets their keyboard —
   // /start is the one command everyone knows, so it must repair a missing one.
   await ctx.reply(M.welcome, kb ? { reply_markup: kb } : {});
@@ -250,35 +257,59 @@ bot.command("responsible", async (ctx) => {
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
 
+/** Telegram housekeeping that must never abort a handler. Dismissing the spinner,
+ *  editing and deleting are all cosmetic, but a throw here after the check-in row is
+ *  already written leaves the participant checked in with nothing to show for it —
+ *  the update 500s, Telegram redelivers, and the retry takes the "already linked"
+ *  branch instead of sending the QR. */
+async function tryTelegram(what: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`telegram: ${what} failed`, err);
+  }
+}
+
+/** The personal QR the doctor scans to mark the medical exam. Safe to send more than
+ *  once, so it doubles as the recovery path for a check-in whose first attempt died. */
+async function sendMedQr(ctx: Context): Promise<unknown> {
+  if (!config.botUsername) return ctx.reply(M.medQrNoUsername);
+  const url = `https://t.me/${config.botUsername}?start=med_${ctx.from!.id}`;
+  const png = await QRCode.toBuffer(url, { width: 512, margin: 2 });
+  return ctx.replyWithPhoto(new InputFile(png, "med-qr.png"), { caption: M.medQrCaption });
+}
+
 bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
+  // Answer before touching the sheet. Telegram invalidates a callback query about 15
+  // seconds after the tap, and the reads below can outlast that under load — answering
+  // afterwards used to throw ("query is too old") once the row had already been written.
+  await tryTelegram("answerCallbackQuery", () => ctx.answerCallbackQuery());
+
   const rowIndex = Number(ctx.match[1]);
   const sheet = await loadVisitors();
 
   const already = findByTelegramId(sheet.visitors, ctx.from.id);
   if (already) {
-    await ctx.answerCallbackQuery();
-    return ctx.editMessageText(M.alreadyLinked(already.name));
+    await tryTelegram("editMessageText", () => ctx.editMessageText(M.alreadyLinked(already.name)));
+    // Recovery: a redelivered update or a second tap must still hand over the QR while
+    // the medical exam is outstanding, otherwise it is lost for good.
+    if (!already.doctorStatus) return sendMedQr(ctx);
+    return;
   }
 
   const { ok, visitor } = await linkAndCheckIn(sheet, rowIndex, ctx.from.id);
-  await ctx.answerCallbackQuery();
-  if (!ok || !visitor) return ctx.editMessageText(M.rowTaken);
+  if (!ok || !visitor) {
+    return tryTelegram("editMessageText", () => ctx.editMessageText(M.rowTaken));
+  }
 
-  await ctx.deleteMessage();
+  await tryTelegram("deleteMessage", () => ctx.deleteMessage());
 
   // Re-link of an already-processed participant: skip straight to the final message.
   if (visitor.doctorStatus && visitor.paymentStatus) {
     return sendFinalMessage(ctx, visitor);
   }
 
-  // Otherwise send the personal QR the doctor scans to mark the medical exam.
-  if (config.botUsername) {
-    const url = `https://t.me/${config.botUsername}?start=med_${ctx.from.id}`;
-    const png = await QRCode.toBuffer(url, { width: 512, margin: 2 });
-    await ctx.replyWithPhoto(new InputFile(png, "med-qr.png"), { caption: M.medQrCaption });
-  } else {
-    await ctx.reply(M.medQrNoUsername);
-  }
+  return sendMedQr(ctx);
 });
 
 /**
