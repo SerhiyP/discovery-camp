@@ -65,7 +65,8 @@ visitors        { _id: rowIndex, name, nameNorm: [], age, room, team,
 leaders         { _id: rowIndex, team, name, telegramId }
 responsible     { _id: rowIndex, mcId, name, telegramId }
 admins          { _id: rowIndex, telegramId, name }
-videos          { _id: videoId, team, fileId, type }
+videos          { _id: videoId, fileId, type }
+teams           { _id: teamId, name }
 registrations   { date, slot, mcId, telegramId, registeredAt,
                   active: true, cancelledAt }
 ```
@@ -145,35 +146,53 @@ no admin command and no pasting a `file_id` into a sheet — that route is remov
 whose leader never sends one falls back to `DEFAULT_VIDEO_FILE_ID`, so no team ends up
 with nothing.
 
-The `Videos` tab is imported into Mongo **once**, during rollout, and is not read or
-written afterwards.
+The `Videos` tab is imported into Mongo by `/syncvideo`, which is run once during rollout;
+the tab is not read or written afterwards.
+
+`/syncvideo` **only inserts team IDs missing from Mongo** and leaves existing documents
+untouched, reporting both counts. It is not a replace. Mongo owns this collection, so a
+replacing sync would discard every video a leader had sent since the import — and a
+one-time command is exactly the kind that gets re-run months later by someone who does not
+remember that. Making it safe to re-run is cheaper than relying on nobody re-running it.
 
 ### Renaming a team
 
 Renaming currently costs one Sheets write **per team member** (`checkin.ts:232` loops
-`updateCell` over every visitor on the team), against the 60-writes-per-minute quota. It
-is the same shape as the per-name loop that made `/syncresp` exhaust the quota on its own.
-`linkResponsibleRows` has the same problem.
+`updateCell` over every visitor on the team), against the 60-writes-per-minute quota.
 
-Two changes, independent of each other:
+The rename now writes **Mongo only**. The Visitors tab is not touched.
 
-- Add a `batchUpdateCells` helper over `values.batchUpdate`, which writes many cells in one
-  request. This fixes rename-team and `linkResponsibleRows` whether or not Mongo lands,
-  and is worth doing on its own.
-- With visitors in Mongo the rename itself becomes a single `updateMany` — atomic and free
-  of quota — and the Sheets write becomes one batched mirror call.
+That cannot work while the team display name is duplicated across every visitor document,
+because `/syncvisitors` replaces that collection from Sheets and would silently revert the
+rename. So the name moves out of the visitor documents entirely:
 
-The rename still writes Sheets. Staff assign and read teams in the Visitors tab, so a
-Mongo-only rename would leave the sheet disagreeing with the bot.
+```
+teams   { _id: teamId, name }
+```
+
+Visitor documents keep the raw team cell from the sheet as the join key; the display name
+is looked up from `teams`. Renaming becomes a single-document update — one write, atomic,
+nothing to loop over and nothing for a sync to clobber.
+
+This also removes the reason the old code was slow: it looped a write per member precisely
+because the name was copied into every member's row. With that gone, no `batchUpdateCells`
+helper is needed — the rename loop was its only caller worth fixing.
+
+Consequence, accepted deliberately: the Visitors tab keeps showing the pre-rename value.
+Staff reading that tab see the original name; the bot shows the new one everywhere.
+
+`linkResponsibleRows` has the same per-row write loop, but touches one to three rows for a
+single person on a command run a handful of times per camp. Left alone.
 
 ### Admin commands
 
 - `/syncmc` — re-read `MCSchedule`, replace catalog, schedule and topics. Reports counts.
 - `/syncvisitors` — refresh the visitor cache from the Visitors tab.
 - `/syncroles` — refresh `leaders`, `responsible` and `admins` from their tabs. Needed
-  after editing a role tab by hand. **Deliberately excludes `videos`**: Mongo owns that
-  collection, so replacing it from the sheet would discard videos leaders have set since
-  the import.
+  after editing a role tab by hand. **Deliberately excludes `videos` and `teams`**: Mongo
+  owns both, so replacing them from Sheets would discard videos leaders have set and
+  revert team renames.
+- `/syncvideo` — import the `Videos` tab into Mongo. Run once at rollout; safe to re-run.
 There is no registration export. Registrations live in Mongo and stay there.
 
 All three are admin-gated and typed-only, following the `/syncresp` precedent.
@@ -209,7 +228,8 @@ Following the pattern established by the quota work — stubbed drivers, no live
 - A role granted through the bot is effective immediately (write-through), without a sync.
 - `/syncroles` leaves `videos` untouched: a video set by a leader survives a re-sync.
 - A team with no video falls back to `DEFAULT_VIDEO_FILE_ID`.
-- Renaming a team with many members issues one Sheets write request, not one per member.
+- Renaming a team issues no Sheets write at all, and survives a `/syncvisitors` run.
+- `/syncvideo` is safe to re-run: a video a leader set after the import is not overwritten.
 - `/start` for a checked-in visitor issues no Sheets request at all — the measurable
   restatement of the "zero on the common path" goal, in the style of the existing
   `checkin-reads` suite.
@@ -227,10 +247,13 @@ The camp is live, so ordering matters:
 4. Switch `loadRoleContext` to Mongo and add write-through on the role write paths. Last
    because it is the change that touches every command, and because until it lands the
    earlier steps have not yet reduced `/start` to zero.
-5. Import the `Videos` tab once and switch video lookup and leader video updates to Mongo.
+5. `/syncvideo` to import the `Videos` tab, then switch video lookup and leader video
+   updates to Mongo. Populate `teams` and switch rename to Mongo in the same step.
 
-`batchUpdateCells` and the rename-team fix are independent of all five steps and can ship
-first — they reduce write-quota pressure immediately.
+All quota fixes to date are deployed and production is current. Check-in and masterclass
+registration are largely done for this camp, so read pressure is low: this work is for
+robustness and for next year, not an emergency. Each step can land and be observed on its
+own.
 
 Each step is independently revertible.
 
