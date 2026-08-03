@@ -7,6 +7,7 @@ export const COLLECTIONS = {
   mcTopics: "mcTopics",
   registrations: "registrations",
   visitors: "visitors",
+  mcSeats: "mcSeats",
   campSchedule: "campSchedule",
 } as const;
 

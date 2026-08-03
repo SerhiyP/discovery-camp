@@ -31,6 +31,8 @@ export async function syncMCFromSheets(): Promise<{
   await database.collection(COLLECTIONS.mcTopics).deleteMany({});
   if (topicDocs.length) await database.collection(COLLECTIONS.mcTopics).insertMany(topicDocs as never);
 
+  await rebuildSeatCounters();
+
   return { masterclasses: mcDocs.length, slots: slotDocs.length, topics: topicDocs.length };
 }
 
@@ -108,6 +110,74 @@ export function asMCRegistrations(regs: MongoRegistration[]): MCRegistration[] {
   }));
 }
 
+// ── Seat counters ────────────────────────────────────────────────────────────
+// Capacity is enforced by a per-(date, slot, mcId) counter document in `mcSeats`:
+// `findOneAndUpdate` with `taken: { $lt: capacity }` and `$inc` is atomic on a
+// single document, so overselling is impossible by construction — no post-insert
+// re-check, no rollback, no ordering assumptions. (An earlier design compensated
+// after insert with an _id-sorted rollback; ObjectIds from different lambdas in
+// the same second sort by random bytes, so racers could disagree about who
+// overflowed and both keep their seats. Reviewed and replaced 2026-08-03.)
+// Drift (a crash between a seat-take and its registration insert leaks a seat)
+// only ever undersells and is healed by /syncmc, which rebuilds the counters
+// from active registrations.
+
+/** Atomically takes one seat. Returns false when the MC is full. */
+async function takeSeat(
+  date: string,
+  slot: string,
+  mcId: string,
+  capacity: number,
+): Promise<boolean> {
+  const col = (await db()).collection(COLLECTIONS.mcSeats);
+  const key = `${date}|${slot}|${mcId}`;
+  const inc = () =>
+    col.findOneAndUpdate(
+      { _id: key as never, taken: { $lt: capacity } },
+      { $inc: { taken: 1 } },
+    );
+  if (await inc()) return true;
+  // No matching doc: the MC is full, or the counter doesn't exist yet.
+  try {
+    const created = await col.updateOne(
+      { _id: key as never },
+      { $setOnInsert: { taken: 1 } },
+      { upsert: true },
+    );
+    if (created.upsertedCount === 1) return true;
+  } catch (err) {
+    // Lost the create race to another lambda — fall through and increment theirs.
+    if ((err as { code?: number }).code !== 11000) throw err;
+  }
+  return (await inc()) !== null;
+}
+
+/** Gives a seat back. Floored at zero: counters rebuilt by /syncmc may already
+ *  account for this cancellation. */
+async function returnSeat(date: string, slot: string, mcId: string): Promise<void> {
+  const col = (await db()).collection(COLLECTIONS.mcSeats);
+  await col.updateOne(
+    { _id: `${date}|${slot}|${mcId}` as never, taken: { $gt: 0 } },
+    { $inc: { taken: -1 } },
+  );
+}
+
+/** Rebuilds seat counters from active registrations. Heals any drift left by a
+ *  crash between a seat-take and its registration insert. Called by /syncmc. */
+export async function rebuildSeatCounters(): Promise<void> {
+  const database = await db();
+  const counts = await database
+    .collection(COLLECTIONS.registrations)
+    .aggregate([
+      { $match: { active: true } },
+      { $group: { _id: { $concat: ["$date", "|", "$slot", "|", "$mcId"] }, taken: { $sum: 1 } } },
+    ])
+    .toArray();
+  const seats = database.collection(COLLECTIONS.mcSeats);
+  await seats.deleteMany({});
+  if (counts.length) await seats.insertMany(counts as never);
+}
+
 export async function registerMongo(
   date: string,
   slot: string,
@@ -119,12 +189,10 @@ export async function registerMongo(
   const id = String(telegramId);
 
   const existing = await col.findOne({ date, slot, telegramId: id, active: true });
-  if (existing) return existing.mcId === mcId ? "already" : "slot_taken";
+  if (existing) return String(existing.mcId) === mcId ? "already" : "slot_taken";
 
-  if (capacity > 0) {
-    const taken = await col.countDocuments({ date, slot, mcId, active: true });
-    if (taken >= capacity) return "full";
-  }
+  const seated = capacity > 0 ? await takeSeat(date, slot, mcId, capacity) : true;
+  if (!seated) return "full";
 
   try {
     await col.insertOne({
@@ -132,37 +200,18 @@ export async function registerMongo(
       registeredAt: nowStamp(), cancelledAt: "",
     } as never);
   } catch (err) {
-    // The unique index rejected a concurrent insert for the same person and slot.
-    // This is the race the sheet-backed version could not close.
     if ((err as { code?: number }).code === 11000) {
+      // The unique index rejected a concurrent insert for the same person and
+      // slot — give our seat back and report what the winner holds.
+      if (capacity > 0) await returnSeat(date, slot, mcId).catch(() => {});
       const now = await col.findOne({ date, slot, telegramId: id, active: true });
-      return now?.mcId === mcId ? "already" : "slot_taken";
+      if (!now) return "full";
+      return String(now.mcId) === mcId ? "already" : "slot_taken";
     }
+    // Any other insert failure: return the seat, then rethrow — mongoGuarded
+    // turns it into a "спробуйте за хвилину" reply.
+    if (capacity > 0) await returnSeat(date, slot, mcId).catch(() => {});
     throw err;
-  }
-
-  // Capacity is checked before the insert, so a burst can still overshoot by the number
-  // of inserts in flight. Re-check afterwards and roll back the losers, which keeps the
-  // seat count exact without a transaction. The sort is load-bearing: find() without a
-  // sort has no guaranteed order, so two racers could each compute a different loser set
-  // (both roll back, or neither does). _id is insertion-ordered, so sorting by it makes
-  // every racer agree on who overflowed.
-  if (capacity > 0) {
-    const taken = await col.countDocuments({ date, slot, mcId, active: true });
-    if (taken > capacity) {
-      const all = await col
-        .find({ date, slot, mcId, active: true })
-        .sort({ _id: 1 })
-        .toArray();
-      const overflow = all.slice(capacity).some((d) => String(d.telegramId) === id);
-      if (overflow) {
-        await col.updateOne(
-          { date, slot, telegramId: id, active: true },
-          { $set: { active: false, cancelledAt: nowStamp() } },
-        );
-        return "full";
-      }
-    }
   }
 
   return "ok";
@@ -179,5 +228,9 @@ export async function unregisterMongo(
     { date, slot, mcId, telegramId: String(telegramId), active: true },
     { $set: { active: false, cancelledAt: nowStamp() } },
   );
-  return res.modifiedCount > 0;
+  if (res.modifiedCount === 0) return false;
+  // Guarded at zero inside returnSeat; a decrement for an unlimited MC (no
+  // counter doc) matches nothing and is a no-op.
+  await returnSeat(date, slot, mcId).catch(() => {});
+  return true;
 }
