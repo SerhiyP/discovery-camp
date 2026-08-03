@@ -54,6 +54,7 @@ import {
   searchResponsibleByName,
 } from "./responsible";
 import { loadCatches, logCatch } from "./phishing";
+import { syncMCFromSheets } from "./mc-store";
 
 export const bot = new Bot(config.botToken);
 
@@ -806,6 +807,18 @@ bot.command("syncresp", async (ctx) => {
   });
   lines.push("", M.mcSyncSummary(added, existing));
   return replyChunked(ctx, lines);
+});
+
+bot.command("syncmc", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  try {
+    const counts = await syncMCFromSheets();
+    return ctx.reply(M.mcSynced(counts.masterclasses, counts.slots, counts.topics));
+  } catch (err) {
+    console.error("syncmc failed", err);
+    return ctx.reply(M.syncFailed);
+  }
 });
 
 // --- superadmin commands ---

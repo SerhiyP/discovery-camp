@@ -173,6 +173,9 @@ export const M = {
     `Додано: ${added}, вже було: ${existing}.`,
   menusSynced: (admins: number, leaders: number) =>
     `Меню команд оновлено ✅\nАдміністраторів: ${admins}, лідерів: ${leaders}.`,
+  mcSynced: (mcs: number, slots: number, topics: number) =>
+    `Каталог МК оновлено ✅\nМайстер-класів: ${mcs}, слотів: ${slots}, тем: ${topics}.`,
+  syncFailed: "Не вдалося синхронізувати. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",
   confirmDelResp: (name: string, title: string) => `Видалити ${name} з «${title}»?`,
