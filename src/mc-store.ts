@@ -73,6 +73,19 @@ export interface MongoRegistration {
 /** Creates the unique partial index that makes "one active registration per slot" a
  *  database guarantee. `active` is an explicit boolean rather than a `cancelledAt: null`
  *  predicate, because a filter on null also matches documents where the field is absent. */
+export async function ensureIndexes(): Promise<void> {
+  const database = await db();
+  const regs = database.collection(COLLECTIONS.registrations);
+  await regs.createIndex(
+    { date: 1, slot: 1, telegramId: 1 },
+    { unique: true, partialFilterExpression: { active: true } },
+  );
+  await regs.createIndex({ date: 1, slot: 1, mcId: 1 });
+  await database.collection(COLLECTIONS.visitors).createIndex({ telegramId: 1 });
+}
+
+const CAMP_SCHEDULE_ID = "grid";
+
 /** Imports the badge-grid schedule into Mongo. The grid applies no per-date filtering —
  *  the same slot list serves every camp day — so it is a single document. */
 export async function syncCampSchedule(): Promise<number> {
@@ -88,24 +101,13 @@ export async function syncCampSchedule(): Promise<number> {
   }
   const col = (await db()).collection(COLLECTIONS.campSchedule);
   await col.deleteMany({});
-  if (slots.length) await col.insertOne({ _id: "grid", slots } as never);
+  if (slots.length) await col.insertOne({ _id: CAMP_SCHEDULE_ID, slots } as never);
   return slots.length;
 }
 
 export async function getCampSlots(): Promise<{ time: string; activity: string }[]> {
   const doc = await (await db()).collection(COLLECTIONS.campSchedule).findOne({});
   return ((doc?.slots as { time: string; activity: string }[]) ?? []);
-}
-
-export async function ensureIndexes(): Promise<void> {
-  const database = await db();
-  const regs = database.collection(COLLECTIONS.registrations);
-  await regs.createIndex(
-    { date: 1, slot: 1, telegramId: 1 },
-    { unique: true, partialFilterExpression: { active: true } },
-  );
-  await regs.createIndex({ date: 1, slot: 1, mcId: 1 });
-  await database.collection(COLLECTIONS.visitors).createIndex({ telegramId: 1 });
 }
 
 export async function getRegistrations(): Promise<MongoRegistration[]> {
