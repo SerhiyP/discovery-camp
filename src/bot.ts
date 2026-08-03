@@ -60,6 +60,7 @@ import {
   getVisitorsMongo,
   linkAndCheckInMongo,
   markDoctorExamMongo,
+  refreshPaymentStatusMongo,
   syncVisitorsFromSheets,
 } from "./visitor-store";
 
@@ -360,9 +361,14 @@ bot.callbackQuery(/^link:(\d+)$/, mongoGuarded(async (ctx) => {
 
   await tryTelegram("deleteMessage", () => ctx.deleteMessage());
 
+  // Payment isn't written live anywhere (financist edits the sheet directly) — a
+  // synced "not paid" is re-checked live once before falling through to the med QR.
+  const paymentStatus =
+    visitor.paymentStatus || (await refreshPaymentStatusMongo(visitor.rowIndex));
+
   // Already fully processed before the incident (doctor + payment confirmed): skip
   // straight to the final message. Otherwise, full flow as normal — med QR first.
-  if (visitor.doctorStatus && visitor.paymentStatus) {
+  if (visitor.doctorStatus && paymentStatus) {
     return sendFinalMessage(ctx, visitor);
   }
 
@@ -420,7 +426,11 @@ bot.callbackQuery("checkanya", mongoGuarded(async (ctx) => {
   const context = await loadRoleContext(ctx.from.id);
   const me = context.visitor;
   if (!me) return safeAnswer(ctx, M.mustCheckInFirst);
-  if (!me.doctorStatus || !me.paymentStatus) {
+
+  // Payment isn't written live anywhere (financist edits the sheet directly) — a
+  // synced "not paid" is re-checked live once before blocking.
+  const paymentStatus = me.paymentStatus || (await refreshPaymentStatusMongo(me.rowIndex));
+  if (!me.doctorStatus || !paymentStatus) {
     return safeAnswer(ctx, { text: M.anyaNotYet, show_alert: true });
   }
   await safeAnswer(ctx);

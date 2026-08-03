@@ -102,6 +102,23 @@ export async function upsertVisitorMongo(v: Visitor): Promise<void> {
   );
 }
 
+/** One-off live re-check of payment status when the Mongo copy says "not paid yet" —
+ *  nothing writes paymentStatus live (the financist edits the sheet directly, and it
+ *  only reaches Mongo via /syncvisitors), so this covers the gap the same way
+ *  findVisitorByTelegramIdMongo covers a telegramId miss: one live Sheets read,
+ *  backfilled into Mongo so the next check is cache-only again. doctorStatus is NOT
+ *  refreshed here — Mongo is already authoritative for it via markDoctorExamMongo,
+ *  and the sheet's own copy is frozen since that scan stopped writing there. */
+export async function refreshPaymentStatusMongo(rowIndex: number): Promise<string> {
+  const { visitors } = await loadVisitors();
+  const paymentStatus = visitors.find((v) => v.rowIndex === rowIndex)?.paymentStatus ?? "";
+  if (paymentStatus) {
+    const col = (await db()).collection(COLLECTIONS.visitors);
+    await col.updateOne({ _id: rowIndex as never }, { $set: { paymentStatus } });
+  }
+  return paymentStatus;
+}
+
 /** Marks the doctor exam done directly in the mirror — the sheet is no longer touched
  *  for this (2026-08-03: doctor status now lives in Mongo, read straight off the
  *  visitor returned by findVisitorByTelegramIdMongo). */
