@@ -19,6 +19,11 @@ export const config = {
   // Read-only "Discovery 2026 AI сітка" spreadsheet (badge schedule grid)
   gridSheetId: process.env.GRID_SHEET_ID ?? "",
 
+  // MongoDB — operational store for masterclasses, registrations and the camp schedule.
+  // Optional: when unset the bot keeps using Sheets for everything.
+  mongoUri: process.env.MONGO_URI ?? "",
+  mongoDb: process.env.MONGO_DB ?? "discovery_camp",
+
   responsesTab: process.env.RESPONSES_TAB ?? "Form Responses 1",
 
   // ── Visitor sheet column headers ─────────────────────────────────────────

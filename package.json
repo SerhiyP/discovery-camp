@@ -12,6 +12,7 @@
   "dependencies": {
     "googleapis": "^173.0.0",
     "grammy": "^1.30.0",
+    "mongodb": "^7.5.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
