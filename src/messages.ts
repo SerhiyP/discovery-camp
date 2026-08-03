@@ -39,6 +39,13 @@ export const M = {
     if (opts.room) lines.push(`Кімната: ${opts.room}`);
     return lines.join("\n");
   },
+  // Fallback identity lines for /help when the person isn't (also) a checked-in
+  // visitor — otherwise a leader/responsible/admin-only account saw no "who am I"
+  // confirmation at all.
+  helpYourInfoLeader: (name: string, team: string) => `👤 Ви: ${name} — лідер команди «${team}»`,
+  helpYourInfoResponsible: (name: string) => `👤 Ви: ${name} — відповідальний за майстер-клас`,
+  helpYourInfoAdmin: (name?: string) =>
+    name ? `👤 Ви: ${name} — адміністратор` : `👤 Ви: адміністратор`,
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
 
   // --- staged check-in: doctor QR -> Аня -> final message ---

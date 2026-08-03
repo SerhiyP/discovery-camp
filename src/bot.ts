@@ -23,7 +23,7 @@ import {
 } from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
 import { M, roleCapabilitiesText } from "./messages";
-import { addAdmin, isAdmin, loadAdmins, removeAdmin } from "./admins";
+import { addAdmin, findAdminByTelegramId, isAdmin, loadAdmins, removeAdmin } from "./admins";
 import {
   addLeader,
   findLeadersByTelegramId,
@@ -199,17 +199,32 @@ bot.command("myid", async (ctx) => {
 });
 
 bot.command("help", mongoGuarded(async (ctx) => {
-  const { visitor, roles } = await loadRoleContext(ctx.from!.id);
-  if (!roles.isVisitor && !roles.isLeader && !roles.isResponsible) {
+  const [{ visitor, roles, asLeader, asResponsible }, { admins }] = await Promise.all([
+    loadRoleContext(ctx.from!.id),
+    loadAdmins(),
+  ]);
+  const admin = findAdminByTelegramId(admins, ctx.from!.id);
+  const superadmin = isSuperAdmin(ctx.from!.id);
+  if (!roles.isVisitor && !roles.isLeader && !roles.isResponsible && !admin && !superadmin) {
     return ctx.reply(`${M.generalInfo}\n\n${M.mustCheckInFirst}`);
   }
   // Roles are already loaded here, so send the matching keyboard along — this is how
   // someone whose role was added straight in the sheet picks up their buttons.
   const kb = keyboardFromRoles(roles);
   // Visitor info is shown first so a mis-linked row (wrong name/team) is caught by the
-  // person reading it, not just by whoever notices the sheet later.
+  // person reading it, not just by whoever notices the sheet later. A leader/responsible/
+  // admin who never also checked in as a visitor still gets an identity line rather than
+  // silently seeing none.
   const infoLine = visitor
     ? M.helpYourInfo({ name: visitor.name, team: visitor.team, room: visitor.room })
+    : asLeader.length > 0
+    ? M.helpYourInfoLeader(asLeader[0].name, asLeader[0].team)
+    : asResponsible.length > 0
+    ? M.helpYourInfoResponsible(asResponsible[0].name)
+    : admin
+    ? M.helpYourInfoAdmin(admin.name)
+    : superadmin
+    ? M.helpYourInfoAdmin()
     : undefined;
   return ctx.reply(
     [infoLine, roleCapabilitiesText(roles), M.infoChannel].filter(Boolean).join("\n\n"),
