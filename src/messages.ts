@@ -193,6 +193,7 @@ export const M = {
   statsRegsTitle: "Реєстрації на МК:",
   statsSlotLine: (slot: string, count: number) => `  ${slot}: ${count}`,
   statsRegsTotal: (total: number) => `Всього реєстрацій: ${total}`,
+  statsNoRegs: "Реєстрацій на МК ще немає.",
   tryAgainLater: "Тимчасова помилка. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",

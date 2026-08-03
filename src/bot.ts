@@ -864,12 +864,16 @@ function formatStats(visitors: Visitor[], regs: MongoRegistration[]): string[] {
     M.statsVisitors(total),
     M.statsCheckedIn(checkedIn, pct),
     "",
-    M.statsRegsTitle,
   ];
+  if (dates.length === 0) {
+    lines.push(M.statsNoRegs);
+    return lines;
+  }
+  lines.push(M.statsRegsTitle);
   for (const date of dates) {
     lines.push(date);
-    for (const [slot, count] of byDate.get(date)!) {
-      lines.push(M.statsSlotLine(slot, count));
+    for (const slot of [...byDate.get(date)!.keys()].sort()) {
+      lines.push(M.statsSlotLine(slot, byDate.get(date)!.get(slot)!));
     }
   }
   lines.push("", M.statsRegsTotal(active.length));
