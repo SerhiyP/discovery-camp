@@ -1168,8 +1168,10 @@ Add to "Key design notes":
   lookups only — payment and doctor status are never mirrored, the doctor gate reads Sheets
   live); the camp schedule from the badge grid by `/syncschedule`. Registrations live only
   in Mongo, where a unique partial index on `(date, slot, telegramId)` over `active: true`
-  makes one-registration-per-slot a database guarantee — the read-count-append race the
-  sheet version had is gone. Check-in write-throughs to the mirror are best-effort. The
+  makes one-registration-per-slot a database guarantee, and capacity is an atomic
+  per-(date, slot, mcId) seat counter (`mcSeats`) taken with a guarded `$inc` — the
+  read-count-append race the sheet version had is gone. `/syncmc` rebuilds the counters
+  from active registrations. Check-in write-throughs to the mirror are best-effort. The
   Mongo client is created once per lambda and never at module scope. Every Mongo-backed
   handler goes through `mongoGuarded` (`src/bot.ts`) so an outage replies «спробуйте за
   хвилину» instead of a 500 that Telegram redelivers. `MONGO_URI` unset means Mongo is not
@@ -1206,6 +1208,62 @@ This is the step that matters — with no automated tests, this checklist IS the
 11. Simulate the un-checked-in path if convenient: an account with no Visitors link tapping a register button gets `mustCheckInFirst`.
 
 If `/syncmc` has not been run, the catalog is empty and every masterclass button silently vanishes from the list — the failure is quiet, which is exactly why it needs checking by hand rather than waiting for a user report. Same for `/syncvisitors`: without it, attendee lists render `невідомий учасник` and the check-in gate falls back to Sheets reads.
+
+---
+
+### Task 8: Team rename touches only the Videos tab
+
+Added 2026-08-03 (user decision, option 1). The current `/renameteam` flow writes three tabs and breaks the ID linkage: `renameVisitorTeams` rewrites every member's «Номер команди» (one Sheets write per member) and `renameLeaderTeams` rewrites `Leaders.Team` — but those cells are the **join keys** that `videoForTeam(visitor.team)` and `updateTeamVideo(myTeams[i])` match against `Videos.ID`. After one rename, the team's check-in video falls back to the default, the leader can no longer set a team video («Команду не знайдено»), and a second rename can't find the Videos row. Team cells are stable IDs; only `Videos.Team` is a display name.
+
+The bot never reads `Videos.Team` back — roster headers and notify confirmations show the raw team cell (the ID). So after this task the new name is visible in the spreadsheet only; in-bot display names arrive with the Mongo `teams` collection (post-camp rollout step 5).
+
+**Files:**
+- Modify: `src/bot.ts` — `/renameteam` command and `rt:` callback
+- Modify: `src/checkin.ts` — delete `renameVisitorTeams`
+- Modify: `src/leaders.ts` — delete `renameLeaderTeams`
+- Modify: `src/messages.ts` — `renameTeamDone` loses the visitors count
+- Modify: `CLAUDE.md` — record the semantics
+
+- [ ] **Step 1: Trim both rename call sites**
+
+In `src/bot.ts`, in the `/renameteam` command and the `rt:` callback, replace the three-way `Promise.all` with a single call:
+
+```typescript
+    await renameTeamVideo(oldTeam, newName);
+    return ctx.reply(M.renameTeamDone(oldTeam, newName));
+```
+
+(In the `rt:` callback the reply is `ctx.editMessageText(M.renameTeamDone(oldTeam, newName))`.) Remove the `renameVisitorTeams` and `renameLeaderTeams` imports.
+
+- [ ] **Step 2: Delete the dead helpers**
+
+Delete `renameVisitorTeams` from `src/checkin.ts` and `renameLeaderTeams` from `src/leaders.ts` — the rename flow was their only caller (verify with grep before deleting; if another caller exists, stop and report instead).
+
+- [ ] **Step 3: Update the message**
+
+In `src/messages.ts`, change `renameTeamDone` to take `(oldTeam: string, newName: string)` and drop the «оновлено N учасників» clause, keeping the rest of the wording.
+
+- [ ] **Step 4: Record the semantics in CLAUDE.md**
+
+In "Key design notes", extend the **Videos lookup** bullet with: renaming a team updates only the `Team` display column in the Videos tab (matched by `ID`); visitor and leader team cells hold the stable ID and are never rewritten.
+
+- [ ] **Step 5: Typecheck**
+
+Run: `npm run typecheck`
+Expected: clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/bot.ts src/checkin.ts src/leaders.ts src/messages.ts CLAUDE.md
+git commit -m "fix(teams): rename updates only the Videos display name
+
+Team cells in Visitors and Leaders are the stable IDs that video lookup
+and video updates join on; rewriting them to the display name broke the
+team video after one rename and made a second rename impossible. Rename
+now writes the one place a display name lives — Videos.Team, keyed by ID.
+Also drops the one-write-per-member Visitors loop."
+```
 
 ---
 
