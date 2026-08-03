@@ -231,7 +231,10 @@ implementation.
 
 ## Testing
 
-Following the pattern established by the quota work — stubbed drivers, no live services:
+**Decision 2026-08-03: no automated tests for the in-camp rollout (steps 1–2 + schedule).**
+Verification is `npm run typecheck` plus the manual production checklist in the plan's
+final task, run before the 13:00 Kyiv cron. The list below stands as the behaviour
+contract and as the test plan if suites are written in the post-camp phase:
 
 - Concurrent registrations for the last seat: exactly one succeeds.
 - Duplicate registration for the same slot is rejected by the index, not by a read.
@@ -276,11 +279,15 @@ that is already behind us. They are robustness work for next year.
 That is the next and last high-pressure moment of this camp, and it repeats every day
 until 2026-08-07.
 
-Steps 1–2 are sufficient on their own: registration needs no visitor lookup, because
-`registrations` stores `telegramId` and names are resolved only when an attendee list is
-rendered. With the catalog and registrations in Mongo, the whole masterclass path —
-listing, registering, cancelling, `📋 Мої реєстрації` — costs zero Sheets reads without
-any of steps 3–5.
+Steps 1–2 need one slice of step 3 pulled forward: a **visitors mirror used only for
+`telegramId` lookups**. Registrations store `telegramId`, so the attendee views
+(`👥 Учасники МК`, `/caught`) need somewhere to resolve names once `EventRegs` stops
+storing them, and the `mcreg` check-in gate needs a zero-read lookup. The mirror is
+synced by `/syncvisitors`, write-through on check-in, Sheets fallback on a miss; payment
+and doctor status are never mirrored. Check-in name search stays on Sheets until the
+post-camp phase. With that in place, the whole masterclass path — listing, registering,
+cancelling, `📋 Мої реєстрації`, attendee lists, team MC view, `/notifymc`, the reminder
+cron — costs zero Sheets reads without the rest of steps 3–5.
 
 The camp schedule ships alongside them. It is read-only, static for the whole camp, and
 pressed many times a day, so it is the cheapest remaining read to eliminate and carries

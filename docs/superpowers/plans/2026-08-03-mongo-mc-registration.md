@@ -2,121 +2,28 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Take the masterclass path and the camp schedule to zero Google Sheets read requests, and make registration capacity race-free, before the next `mc-reminder` cron firing.
+**Goal:** Take the masterclass path and the camp schedule to zero Google Sheets read requests, and make registration capacity race-free, before the next `mc-reminder` cron firing (13:00 Kyiv daily until 2026-08-07).
 
-**Architecture:** MongoDB becomes the store for the masterclass catalog, schedule, topics, registrations, and a cached copy of the badge-grid camp schedule. Sheets stays the source of truth for the catalog and grid, imported by admin commands (`/syncmc`, `/syncschedule`). Registrations live only in Mongo, where a unique partial index makes "one active registration per slot" a database guarantee rather than a read-count-append race. The `EventRegs` tab is retired.
+**Architecture:** MongoDB becomes the store for the masterclass catalog, schedule, topics, registrations, a scoped visitors mirror, and a cached copy of the badge-grid camp schedule. Sheets stays the source of truth for the catalog, the grid and the Visitors tab, imported by admin commands (`/syncmc`, `/syncvisitors`, `/syncschedule`). Registrations live only in Mongo, where a unique partial index makes "one active registration per slot" a database guarantee rather than a read-count-append race. The `EventRegs` tab is retired — **including its readers**: `👥 Учасники МК`, `📣`/`/notifymc`, `🎨 МК команди` and `/caught` all switch to Mongo, with attendee names resolved from the visitors mirror.
 
-**Tech Stack:** TypeScript, grammY, `mongodb` Node driver (new dependency), Vercel serverless, `tsx` for tests.
+**Tech Stack:** TypeScript, grammY, `mongodb` Node driver (new dependency), Vercel serverless.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-08-03-mongo-operational-store-design.md`. This plan implements rollout steps 1–2 plus the camp schedule only. Visitors, role tabs, videos and team rename are explicitly **out of scope**.
+- Spec: `docs/superpowers/specs/2026-08-03-mongo-operational-store-design.md`. This plan implements rollout steps 1–2, the camp schedule, and a **scoped slice of step 3**: a visitors mirror used only for `telegramId` lookups (check-in gate, attendee names, reminder recipients). Check-in name search, role tabs, videos and team rename stay on Sheets — out of scope.
+- **No tests.** Verification is `npm run typecheck` plus the manual production checklist in Task 7. Do not create a `tests/` directory or add a test script.
+- **Payment and doctor status are never mirrored to Mongo** (spec: "never cached — read live"). The visitor docs deliberately omit them; «Я пройшов(ла) Аню» keeps reading Sheets live.
 - `api/bot.ts` has `maxDuration: 10` (`vercel.json`). Mongo connect and query timeouts must stay well inside that budget.
 - Vercel spawns many concurrent lambdas. The Mongo client MUST be created once at module scope and reused; never per request.
 - **No expensive work at module scope** (CLAUDE.md). Creating the client object is lazy and cheap; do not `await connect()` at import time.
-- There is **no test framework** in this repo. Tests are standalone `.mts` scripts run with `npx tsx`, using stubbed drivers — follow the existing pattern (see "Testing setup" below).
+- **A Mongo failure must never become an uncaught handler error.** There is no global `bot.catch` (deliberate, per CLAUDE.md), so an uncaught error → HTTP 500 → Telegram redelivers the same update — the amplification loop that turned the quota problem into an outage. Every Mongo-backed handler goes through the `mongoGuarded` wrapper (Task 5).
 - All user-facing strings go in `src/messages.ts` in the `M` object. Ukrainian only.
 - Admin commands are gated with `isAdmin(ctx.from?.id, admins)` and reply `M.notAdmin` otherwise.
-- Do not add a global `bot.catch` (CLAUDE.md documents this as deliberate).
 - Never leave a raw NUL byte or other control character in source. `npm run typecheck` will not catch it; `git diff --stat` reporting a `.ts` file as `Bin` is the signal.
 
-## Testing setup
-
-Tests live in `tests/` as `.mts` files and are run with `npx tsx tests/<name>.test.mts`. They must exit non-zero on failure. Each stubs its dependencies — **no test may touch a live MongoDB or Google Sheets**.
-
-Three suites already exist as scratch scripts and must be kept green. Task 1 moves them into `tests/` so there is one place to run everything.
-
 ---
 
-### Task 1: Test harness and existing suites
-
-Establish `tests/` and a single command that runs everything, so later tasks have somewhere to put tests and a regression signal.
-
-**Files:**
-- Create: `tests/lib/assert.mts`
-- Create: `tests/run-all.mts`
-- Modify: `package.json` (add `test` script)
-
-**Interfaces:**
-- Produces: `check(label: string, actual: unknown, expected: unknown): void` and `report(): never` from `tests/lib/assert.mts`, used by every later test.
-
-- [ ] **Step 1: Write the shared assertion helper**
-
-Create `tests/lib/assert.mts`:
-
-```typescript
-let failures = 0;
-
-/** Deep-equality check by JSON shape. Prints one line per check. */
-export function check(label: string, actual: unknown, expected: unknown): void {
-  const a = JSON.stringify(actual);
-  const e = JSON.stringify(expected);
-  if (a === e) {
-    console.log(`  ok   ${label}`);
-  } else {
-    failures++;
-    console.log(`  FAIL ${label}\n       expected ${e}\n       actual   ${a}`);
-  }
-}
-
-/** Prints the summary and exits with the right status. Call at the end of every suite. */
-export function report(): never {
-  console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} CHECK(S) FAILED.`);
-  process.exit(failures === 0 ? 0 : 1);
-}
-```
-
-- [ ] **Step 2: Add the runner**
-
-Create `tests/run-all.mts`:
-
-```typescript
-import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
-
-const dir = new URL(".", import.meta.url).pathname;
-const suites = readdirSync(dir).filter((f) => f.endsWith(".test.mts")).sort();
-
-let failed = 0;
-for (const suite of suites) {
-  console.log(`\n=== ${suite} ===`);
-  try {
-    execFileSync("npx", ["tsx", join(dir, suite)], { stdio: "inherit" });
-  } catch {
-    failed++;
-  }
-}
-console.log(failed === 0 ? `\n${suites.length} suite(s) passed.` : `\n${failed} suite(s) FAILED.`);
-process.exit(failed === 0 ? 0 : 1);
-```
-
-- [ ] **Step 3: Add the test script**
-
-In `package.json`, add to `scripts`:
-
-```json
-"test": "tsx tests/run-all.mts"
-```
-
-- [ ] **Step 4: Run it to verify it reports zero suites**
-
-Run: `npm test`
-Expected: PASS, `0 suite(s) passed.` — no `.test.mts` files exist yet.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add tests/lib/assert.mts tests/run-all.mts package.json
-git commit -m "test: add a test harness and runner
-
-There was no test framework; suites were ad-hoc scratch scripts. This gives
-them one home and one command, so later work has a regression signal."
-```
-
----
-
-### Task 2: Mongo connection module
+### Task 1: Mongo connection module
 
 A single shared client, safe for serverless.
 
@@ -124,14 +31,13 @@ A single shared client, safe for serverless.
 - Create: `src/mongo.ts`
 - Modify: `src/config.ts:20` (add `mongoUri`, `mongoDb`)
 - Modify: `package.json` (add `mongodb` dependency)
-- Test: `tests/mongo-config.test.mts`
 
 **Interfaces:**
 - Consumes: `config` from `src/config.ts`.
 - Produces:
   - `db(): Promise<Db>` — the shared database handle, connecting on first use.
   - `mongoEnabled(): boolean` — whether `MONGO_URI` is configured.
-  - `COLLECTIONS` — `{ masterclasses: "masterclasses", mcSchedule: "mcSchedule", mcTopics: "mcTopics", registrations: "registrations", campSchedule: "campSchedule" }`.
+  - `COLLECTIONS` — `{ masterclasses, mcSchedule, mcTopics, registrations, visitors, campSchedule }`.
 
 - [ ] **Step 1: Install the driver**
 
@@ -163,6 +69,7 @@ export const COLLECTIONS = {
   mcSchedule: "mcSchedule",
   mcTopics: "mcTopics",
   registrations: "registrations",
+  visitors: "visitors",
   campSchedule: "campSchedule",
 } as const;
 
@@ -198,60 +105,17 @@ export async function db(): Promise<Db> {
     throw err;
   }
 }
-
-/** Test seam: lets suites inject a stub database without a live server. */
-export function __setDbForTests(stub: Db | null): void {
-  connecting = stub ? Promise.resolve(stub) : null;
-}
 ```
 
-- [ ] **Step 4: Write the test**
-
-Create `tests/mongo-config.test.mts`:
-
-```typescript
-process.env.BOT_TOKEN = "x";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "x@example.com";
-process.env.GOOGLE_PRIVATE_KEY = "x";
-process.env.SHEET_ID = "SHEET_MAIN";
-process.env.MONGO_URI = "";
-
-import { check, report } from "./lib/assert.mts";
-
-const P = "/Users/serhii/projects/discovery-camp/src";
-const { mongoEnabled, db, COLLECTIONS } = await import(`${P}/mongo.ts`);
-
-console.log("\nMongo module with MONGO_URI unset:");
-check("mongoEnabled() is false", mongoEnabled(), false);
-
-let threw = false;
-try {
-  await db();
-} catch {
-  threw = true;
-}
-check("db() throws rather than hanging", threw, true);
-check("collection names are stable", Object.keys(COLLECTIONS).sort(), [
-  "campSchedule", "masterclasses", "mcSchedule", "mcTopics", "registrations",
-]);
-
-report();
-```
-
-- [ ] **Step 5: Run the test**
-
-Run: `npx tsx tests/mongo-config.test.mts`
-Expected: PASS, all three checks ok.
-
-- [ ] **Step 6: Typecheck**
+- [ ] **Step 4: Typecheck**
 
 Run: `npm run typecheck`
 Expected: no output (clean).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/mongo.ts src/config.ts package.json package-lock.json tests/mongo-config.test.mts
+git add src/mongo.ts src/config.ts package.json package-lock.json
 git commit -m "feat(mongo): add a serverless-safe shared client
 
 One client per lambda instance, created lazily and reused. Vercel spawns
@@ -262,7 +126,7 @@ cold start would pay for it inside a 10s budget."
 
 ---
 
-### Task 3: Mongo-backed masterclass catalog and `/syncmc`
+### Task 2: Mongo-backed masterclass catalog and `/syncmc`
 
 Import the `MCSchedule` tab into Mongo and read the catalog from there.
 
@@ -270,7 +134,6 @@ Import the `MCSchedule` tab into Mongo and read the catalog from there.
 - Create: `src/mc-store.ts`
 - Modify: `src/messages.ts` (add sync messages)
 - Modify: `src/bot.ts` (add `/syncmc`)
-- Test: `tests/mc-store.test.mts`
 
 **Interfaces:**
 - Consumes: `db()`, `COLLECTIONS` from `src/mongo.ts`; `Masterclass`, `SlotSchedule`, `loadMCTabRows`, `loadMasterclasses`, `loadMCSchedule`, `loadMCTopics` from `src/masterclasses.ts`.
@@ -280,91 +143,7 @@ Import the `MCSchedule` tab into Mongo and read the catalog from there.
   - `getMCSchedule(): Promise<SlotSchedule[]>`
   - `getMCTopics(): Promise<Map<string, string>>` — keyed `"<date>|<mcId>"`, matching the existing sheet-backed shape.
 
-- [ ] **Step 1: Write the failing test**
-
-Create `tests/mc-store.test.mts`:
-
-```typescript
-process.env.BOT_TOKEN = "x";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "x@example.com";
-process.env.GOOGLE_PRIVATE_KEY = "x";
-process.env.SHEET_ID = "SHEET_MAIN";
-process.env.MONGO_URI = "mongodb://stub";
-
-import { check, report } from "./lib/assert.mts";
-import { google } from "googleapis";
-
-// MCSchedule tab: schedule block on the left, catalog block to the right.
-const MC_TAB = [
-  ["Date", "Slot", "MC IDs", "", "№", "Назва", "Відповідальний", "Місце проведення", "Кількість учасників"],
-  ["2026-08-04", "12:00-13:00", "1,2", "", "1.", "Малювання", "Оля", "Намет 1", "10"],
-  ["2026-08-04", "14:00-15:00", "2", "", "2.", "Гончарство", "Іван", "Намет 2", "без обмежень"],
-];
-
-(google as unknown as { sheets: unknown }).sheets = () => ({
-  spreadsheets: {
-    values: {
-      batchGet: async ({ ranges }: { ranges: string[] }) => ({
-        data: { valueRanges: ranges.map(() => ({ values: MC_TAB })) },
-      }),
-    },
-  },
-});
-
-// Minimal in-memory stand-in for the collections mc-store uses.
-function makeStubDb() {
-  const store = new Map<string, Record<string, unknown>[]>();
-  return {
-    store,
-    collection(name: string) {
-      if (!store.has(name)) store.set(name, []);
-      return {
-        async deleteMany() { store.set(name, []); },
-        async insertMany(docs: Record<string, unknown>[]) { store.get(name)!.push(...docs); },
-        find() {
-          return { async toArray() { return store.get(name)!; } };
-        },
-      };
-    },
-  };
-}
-
-const P = "/Users/serhii/projects/discovery-camp/src";
-const mongo = await import(`${P}/mongo.ts`);
-const stub = makeStubDb();
-mongo.__setDbForTests(stub as never);
-
-const { syncMCFromSheets, getMasterclasses, getMCSchedule } = await import(`${P}/mc-store.ts`);
-
-console.log("\n/syncmc imports the MCSchedule tab:");
-const counts = await syncMCFromSheets();
-check("masterclasses imported", counts.masterclasses, 2);
-check("schedule slots imported", counts.slots, 2);
-
-console.log("\nCatalog reads come from Mongo:");
-const mcs = await getMasterclasses();
-check("two masterclasses", mcs.length, 2);
-check("title parsed", mcs[0].title, "Малювання");
-check("place parsed", mcs[0].place, "Намет 1");
-check("numeric capacity", mcs[0].capacity, 10);
-check("'без обмежень' is unlimited", mcs[1].capacity, 0);
-
-const slots = await getMCSchedule();
-check("slot ids parsed", slots[0].mcIds, ["1", "2"]);
-
-console.log("\nRe-syncing replaces rather than duplicating:");
-await syncMCFromSheets();
-check("still two masterclasses", (await getMasterclasses()).length, 2);
-
-report();
-```
-
-- [ ] **Step 2: Run it to verify it fails**
-
-Run: `npx tsx tests/mc-store.test.mts`
-Expected: FAIL — `Cannot find module .../src/mc-store.ts`.
-
-- [ ] **Step 3: Write the store**
+- [ ] **Step 1: Write the store**
 
 Create `src/mc-store.ts`:
 
@@ -374,7 +153,9 @@ import { COLLECTIONS, db } from "./mongo";
 
 /** Re-imports the MCSchedule tab into Mongo. Replaces rather than upserts, so a row
  *  deleted from the sheet disappears here too. Sheets stays the source of truth for
- *  the catalog; Mongo is the copy every request reads. */
+ *  the catalog; Mongo is the copy every request reads. The delete-then-insert window
+ *  is accepted: /syncmc runs rarely, by an admin, and a failed insert is fixed by
+ *  re-running the command. */
 export async function syncMCFromSheets(): Promise<{
   masterclasses: number;
   slots: number;
@@ -428,12 +209,7 @@ export async function getMCTopics(): Promise<Map<string, string>> {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `npx tsx tests/mc-store.test.mts`
-Expected: PASS, all nine checks ok.
-
-- [ ] **Step 5: Add the messages**
+- [ ] **Step 2: Add the messages**
 
 In `src/messages.ts`, after the `menusSynced` entry, add:
 
@@ -443,7 +219,7 @@ In `src/messages.ts`, after the `menusSynced` entry, add:
   syncFailed: "Не вдалося синхронізувати. Спробуйте ще раз за хвилину.",
 ```
 
-- [ ] **Step 6: Add the `/syncmc` command**
+- [ ] **Step 3: Add the `/syncmc` command**
 
 In `src/bot.ts`, add next to the other admin sync commands (near `/syncresp`):
 
@@ -467,20 +243,196 @@ Add to the imports at the top of `src/bot.ts`:
 import { syncMCFromSheets } from "./mc-store";
 ```
 
-- [ ] **Step 7: Typecheck and run the whole suite**
+- [ ] **Step 4: Typecheck**
 
-Run: `npm run typecheck && npm test`
-Expected: typecheck clean; all suites pass.
+Run: `npm run typecheck`
+Expected: clean.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/mc-store.ts src/messages.ts src/bot.ts tests/mc-store.test.mts
+git add src/mc-store.ts src/messages.ts src/bot.ts
 git commit -m "feat(mc): import the masterclass catalog into Mongo via /syncmc
 
 Sheets stays the source of truth for the catalog; Mongo is the copy every
 request reads. Sync replaces rather than upserts so a row deleted from the
 sheet disappears here too."
+```
+
+---
+
+### Task 3: Visitors mirror and `/syncvisitors`
+
+A scoped mirror of the Visitors tab, used only for `telegramId` lookups: the mcreg check-in gate, attendee-name resolution, and reminder recipients. Payment and doctor status are deliberately excluded (spec: never cached). Check-in name search stays on Sheets.
+
+**Files:**
+- Create: `src/visitor-store.ts`
+- Modify: `src/mongo.ts` — nothing (collection name added in Task 1)
+- Modify: `src/messages.ts` (add sync message)
+- Modify: `src/bot.ts` (add `/syncvisitors`; write-through after `linkAndCheckIn`)
+
+**Interfaces:**
+- Consumes: `Visitor`, `loadVisitors` from `src/checkin.ts`; `db()`, `COLLECTIONS` from `src/mongo.ts`.
+- Produces:
+  - `syncVisitorsFromSheets(): Promise<number>`
+  - `getVisitorsMongo(): Promise<Visitor[]>` — adapter to the existing `Visitor` shape, `paymentStatus`/`doctorStatus` always `""`.
+  - `findVisitorByTelegramIdMongo(telegramId: number): Promise<Visitor | undefined>` — Mongo lookup with a Sheets fallback on miss.
+  - `upsertVisitorMongo(v: Visitor): Promise<void>` — write-through used at check-in.
+
+Import direction is one-way (`visitor-store` → `checkin`); the write-through call lives in `src/bot.ts`, **not** inside `linkAndCheckIn`, to avoid a circular import.
+
+- [ ] **Step 1: Write the store**
+
+Create `src/visitor-store.ts`:
+
+```typescript
+import { Visitor, loadVisitors } from "./checkin";
+import { COLLECTIONS, db } from "./mongo";
+
+// Mirror of the Visitors tab for telegramId lookups only. Payment and doctor status
+// are deliberately NOT mirrored — the doctor gate must always read Sheets live.
+interface VisitorDoc {
+  _id: number; // sheet rowIndex, 0-based incl. header — what updateCell addresses
+  name: string;
+  age: string;
+  team: string;
+  room: string;
+  specialNeeds: string;
+  telegramId: string;
+  checkedIn: string;
+}
+
+function toVisitor(d: Partial<VisitorDoc>): Visitor {
+  return {
+    rowIndex: Number(d._id ?? -1),
+    name: String(d.name ?? ""),
+    age: String(d.age ?? ""),
+    paymentStatus: "",
+    doctorStatus: "",
+    team: String(d.team ?? ""),
+    room: String(d.room ?? ""),
+    specialNeeds: String(d.specialNeeds ?? ""),
+    telegramId: String(d.telegramId ?? ""),
+    checkedIn: String(d.checkedIn ?? ""),
+  };
+}
+
+/** Replaces the mirror from the Visitors tab. Replace, not upsert: row indices shift
+ *  when staff delete a sheet row, and a replace self-corrects that on the next sync. */
+export async function syncVisitorsFromSheets(): Promise<number> {
+  const { visitors } = await loadVisitors();
+  const docs: VisitorDoc[] = visitors.map((v) => ({
+    _id: v.rowIndex,
+    name: v.name,
+    age: v.age,
+    team: v.team,
+    room: v.room,
+    specialNeeds: v.specialNeeds,
+    telegramId: v.telegramId,
+    checkedIn: v.checkedIn,
+  }));
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  await col.deleteMany({});
+  if (docs.length) await col.insertMany(docs as never);
+  return docs.length;
+}
+
+export async function getVisitorsMongo(): Promise<Visitor[]> {
+  const docs = await (await db()).collection(COLLECTIONS.visitors).find({}).toArray();
+  return docs.map((d) => toVisitor(d as never));
+}
+
+/** Mongo lookup by Telegram ID. On a miss, falls back to one Sheets read and
+ *  back-fills the mirror — covers a check-in that happened after the last sync
+ *  when the write-through also failed. */
+export async function findVisitorByTelegramIdMongo(
+  telegramId: number,
+): Promise<Visitor | undefined> {
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  const doc = await col.findOne({ telegramId: String(telegramId) });
+  if (doc) return toVisitor(doc as never);
+  const { visitors } = await loadVisitors();
+  const v = visitors.find((x) => x.telegramId === String(telegramId));
+  if (v) await upsertVisitorMongo(v).catch(() => {});
+  return v;
+}
+
+/** Write-through from check-in, so the next MC tap sees the link without a re-sync. */
+export async function upsertVisitorMongo(v: Visitor): Promise<void> {
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  await col.updateOne(
+    { _id: v.rowIndex as never },
+    {
+      $set: {
+        name: v.name,
+        age: v.age,
+        team: v.team,
+        room: v.room,
+        specialNeeds: v.specialNeeds,
+        telegramId: v.telegramId,
+        checkedIn: v.checkedIn,
+      },
+    },
+    { upsert: true },
+  );
+}
+```
+
+- [ ] **Step 2: Add the message and command**
+
+In `src/messages.ts`, after `mcSynced`:
+
+```typescript
+  visitorsSynced: (count: number) => `Учасників синхронізовано ✅\nЗаписів: ${count}.`,
+```
+
+In `src/bot.ts`, next to `/syncmc`:
+
+```typescript
+bot.command("syncvisitors", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  try {
+    return ctx.reply(M.visitorsSynced(await syncVisitorsFromSheets()));
+  } catch (err) {
+    console.error("syncvisitors failed", err);
+    return ctx.reply(M.syncFailed);
+  }
+});
+```
+
+- [ ] **Step 3: Write-through at check-in**
+
+In `src/bot.ts`, find the call site of `linkAndCheckIn` (the check-in confirmation callback). Immediately after a successful link (`ok === true`), add:
+
+```typescript
+  if (mongoEnabled()) {
+    // Best-effort: check-in is Sheets-owned and must not break on a Mongo outage.
+    upsertVisitorMongo({
+      ...visitor,
+      telegramId: String(ctx.from.id),
+      checkedIn: visitor.checkedIn || nowStamp(),
+    }).catch((err) => console.error("visitor write-through failed", err));
+  }
+```
+
+(Adjust variable names to the surrounding code; `visitor` is the row `linkAndCheckIn` returned.) Import `mongoEnabled` from `./mongo` and `upsertVisitorMongo`, `syncVisitorsFromSheets` from `./visitor-store`.
+
+- [ ] **Step 4: Typecheck**
+
+Run: `npm run typecheck`
+Expected: clean.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/visitor-store.ts src/messages.ts src/bot.ts
+git commit -m "feat(visitors): scoped Mongo mirror for telegramId lookups
+
+Used by the MC check-in gate, attendee-name resolution and the reminder
+cron. Payment and doctor status are deliberately not mirrored — the doctor
+gate always reads Sheets live. Check-in write-through is best-effort so a
+Mongo outage cannot break check-in itself."
 ```
 
 ---
@@ -491,137 +443,23 @@ The core of the change. Registration becomes a Mongo insert guarded by a unique 
 
 **Files:**
 - Modify: `src/mc-store.ts` (add registration functions)
-- Test: `tests/mc-registration.test.mts`
 
 **Interfaces:**
-- Consumes: `db()`, `COLLECTIONS`, `getMasterclasses()`.
+- Consumes: `db()`, `COLLECTIONS`.
 - Produces, mirroring the existing sheet-backed signatures in `src/masterclasses.ts` so call sites change as little as possible:
   - `ensureIndexes(): Promise<void>`
   - `MongoRegistration` — `{ date: string; slot: string; mcId: string; telegramId: string; active: boolean }`
   - `getRegistrations(): Promise<MongoRegistration[]>`
-  - `registerMongo(date: string, slot: string, mcId: string, capacity: number, telegramId: number): Promise<RegisterResult>` — `RegisterResult` is the existing `"ok" | "full" | "already" | "slot_taken"` from `src/masterclasses.ts`
-  - `unregisterMongo(date: string, slot: string, mcId: string, telegramId: number): Promise<boolean>`
+  - `registerMongo(date, slot, mcId, capacity, telegramId): Promise<RegisterResult>` — `RegisterResult` is the existing `"ok" | "full" | "already" | "slot_taken"` from `src/masterclasses.ts`
+  - `unregisterMongo(date, slot, mcId, telegramId): Promise<boolean>`
+  - `asMCRegistrations(regs: MongoRegistration[]): MCRegistration[]` — adapter for the pure helpers.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Implement the registration functions**
 
-Create `tests/mc-registration.test.mts`. The stub models the unique partial index, because that guarantee is the whole point of this task:
-
-```typescript
-process.env.BOT_TOKEN = "x";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "x@example.com";
-process.env.GOOGLE_PRIVATE_KEY = "x";
-process.env.SHEET_ID = "SHEET_MAIN";
-process.env.MONGO_URI = "mongodb://stub";
-
-import { check, report } from "./lib/assert.mts";
-
-interface Doc { date: string; slot: string; mcId: string; telegramId: string; active: boolean }
-
-/** In-memory collection that enforces the unique partial index on
- *  (date, slot, telegramId) over { active: true }, the way Mongo would. */
-function makeStubDb() {
-  let docs: Doc[] = [];
-  return {
-    reset() { docs = []; },
-    all() { return docs; },
-    collection() {
-      return {
-        async createIndex() {},
-        find(filter: Partial<Doc> = {}) {
-          return {
-            async toArray() {
-              return docs.filter((d) =>
-                Object.entries(filter).every(([k, v]) => (d as never as Record<string, unknown>)[k] === v));
-            },
-          };
-        },
-        async countDocuments(filter: Partial<Doc>) {
-          return docs.filter((d) =>
-            Object.entries(filter).every(([k, v]) => (d as never as Record<string, unknown>)[k] === v)).length;
-        },
-        async findOne(filter: Partial<Doc>) {
-          return docs.find((d) =>
-            Object.entries(filter).every(([k, v]) => (d as never as Record<string, unknown>)[k] === v)) ?? null;
-        },
-        async insertOne(doc: Doc) {
-          const clash = docs.some((d) =>
-            d.active && doc.active && d.date === doc.date && d.slot === doc.slot &&
-            d.telegramId === doc.telegramId);
-          if (clash) {
-            throw Object.assign(new Error("E11000 duplicate key error"), { code: 11000 });
-          }
-          docs.push({ ...doc });
-          return { insertedId: "x" };
-        },
-        async updateOne(filter: Partial<Doc>, update: { $set: Partial<Doc> }) {
-          const target = docs.find((d) =>
-            Object.entries(filter).every(([k, v]) => (d as never as Record<string, unknown>)[k] === v));
-          if (!target) return { modifiedCount: 0 };
-          Object.assign(target, update.$set);
-          return { modifiedCount: 1 };
-        },
-      };
-    },
-  };
-}
-
-const P = "/Users/serhii/projects/discovery-camp/src";
-const mongo = await import(`${P}/mongo.ts`);
-const stub = makeStubDb();
-mongo.__setDbForTests(stub as never);
-
-const { registerMongo, unregisterMongo, getRegistrations } = await import(`${P}/mc-store.ts`);
-
-const D = "2026-08-04", S = "12:00-13:00";
-
-console.log("\nHappy path:");
-stub.reset();
-check("first registration succeeds", await registerMongo(D, S, "1", 10, 111), "ok");
-check("one active registration stored", (await getRegistrations()).length, 1);
-
-console.log("\nDuplicate and slot rules:");
-check("same MC again is 'already'", await registerMongo(D, S, "1", 10, 111), "already");
-check("different MC same slot is 'slot_taken'", await registerMongo(D, S, "2", 10, 111), "slot_taken");
-
-console.log("\nCapacity is enforced:");
-stub.reset();
-check("seat 1 of 1", await registerMongo(D, S, "1", 1, 111), "ok");
-check("seat 2 of 1 is 'full'", await registerMongo(D, S, "1", 1, 222), "full");
-check("unlimited capacity accepts anyone", await registerMongo(D, S, "9", 0, 333), "ok");
-
-console.log("\nTwo people racing for the last seat — exactly one wins:");
-stub.reset();
-await registerMongo(D, S, "1", 3, 1);
-await registerMongo(D, S, "1", 3, 2);
-const raced = await Promise.all([
-  registerMongo(D, S, "1", 3, 777),
-  registerMongo(D, S, "1", 3, 888),
-]);
-check("exactly one 'ok'", raced.filter((r) => r === "ok").length, 1);
-check("the other is refused", raced.filter((r) => r !== "ok").length, 1);
-check("capacity of 3 not exceeded", (await getRegistrations()).filter((r) => r.active).length, 3);
-
-console.log("\nCancelling frees the slot:");
-stub.reset();
-await registerMongo(D, S, "1", 10, 111);
-check("cancel succeeds", await unregisterMongo(D, S, "1", 111), true);
-check("cancelling twice is false", await unregisterMongo(D, S, "1", 111), false);
-check("can re-register the same slot", await registerMongo(D, S, "2", 10, 111), "ok");
-
-report();
-```
-
-- [ ] **Step 2: Run it to verify it fails**
-
-Run: `npx tsx tests/mc-registration.test.mts`
-Expected: FAIL — `registerMongo is not a function`.
-
-- [ ] **Step 3: Implement the registration functions**
-
-Append to `src/mc-store.ts`:
+Append to `src/mc-store.ts` (merge the imports into the existing import statements):
 
 ```typescript
-import { RegisterResult } from "./masterclasses";
+import { MCRegistration, RegisterResult } from "./masterclasses";
 import { nowStamp } from "./config";
 
 export interface MongoRegistration {
@@ -636,12 +474,14 @@ export interface MongoRegistration {
  *  database guarantee. `active` is an explicit boolean rather than a `cancelledAt: null`
  *  predicate, because a filter on null also matches documents where the field is absent. */
 export async function ensureIndexes(): Promise<void> {
-  const col = (await db()).collection(COLLECTIONS.registrations);
-  await col.createIndex(
+  const database = await db();
+  const regs = database.collection(COLLECTIONS.registrations);
+  await regs.createIndex(
     { date: 1, slot: 1, telegramId: 1 },
     { unique: true, partialFilterExpression: { active: true } },
   );
-  await col.createIndex({ date: 1, slot: 1, mcId: 1 });
+  await regs.createIndex({ date: 1, slot: 1, mcId: 1 });
+  await database.collection(COLLECTIONS.visitors).createIndex({ telegramId: 1 });
 }
 
 export async function getRegistrations(): Promise<MongoRegistration[]> {
@@ -652,6 +492,22 @@ export async function getRegistrations(): Promise<MongoRegistration[]> {
     mcId: String(d.mcId ?? ""),
     telegramId: String(d.telegramId ?? ""),
     active: d.active === true,
+  }));
+}
+
+/** Adapts Mongo documents to the shape the pure helpers in masterclasses.ts expect
+ *  (buildSlotButtons, activeRegs, hasActiveRegistrationForSlot). Those functions are
+ *  array-only and stay unchanged; rowIndex is unused by them, and name is resolved
+ *  from the visitors mirror where a view needs it. */
+export function asMCRegistrations(regs: MongoRegistration[]): MCRegistration[] {
+  return regs.map((r) => ({
+    rowIndex: -1,
+    date: r.date,
+    slot: r.slot,
+    mcId: r.mcId,
+    telegramId: r.telegramId,
+    name: "",
+    cancelled: !r.active,
   }));
 }
 
@@ -690,14 +546,19 @@ export async function registerMongo(
 
   // Capacity is checked before the insert, so a burst can still overshoot by the number
   // of inserts in flight. Re-check afterwards and roll back the losers, which keeps the
-  // seat count exact without a transaction.
+  // seat count exact without a transaction. The sort is load-bearing: find() without a
+  // sort has no guaranteed order, so two racers could each compute a different loser set
+  // (both roll back, or neither does). _id is insertion-ordered, so sorting by it makes
+  // every racer agree on who overflowed.
   if (capacity > 0) {
     const taken = await col.countDocuments({ date, slot, mcId, active: true });
     if (taken > capacity) {
-      const mine = await col.findOne({ date, slot, telegramId: id, active: true });
-      const all = await col.find({ date, slot, mcId, active: true }).toArray();
+      const all = await col
+        .find({ date, slot, mcId, active: true })
+        .sort({ _id: 1 })
+        .toArray();
       const overflow = all.slice(capacity).some((d) => String(d.telegramId) === id);
-      if (mine && overflow) {
+      if (overflow) {
         await col.updateOne(
           { date, slot, telegramId: id, active: true },
           { $set: { active: false, cancelledAt: nowStamp() } },
@@ -725,193 +586,76 @@ export async function unregisterMongo(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `npx tsx tests/mc-registration.test.mts`
-Expected: PASS, all thirteen checks ok — including "exactly one 'ok'" in the race.
-
-- [ ] **Step 5: Typecheck**
+- [ ] **Step 2: Typecheck**
 
 Run: `npm run typecheck`
 Expected: clean.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add src/mc-store.ts tests/mc-registration.test.mts
+git add src/mc-store.ts
 git commit -m "feat(mc): registrations in Mongo with atomic capacity
 
 A unique partial index on (date, slot, telegramId) over active documents
 makes one-registration-per-slot a database guarantee. Capacity is checked
-before insert and re-checked after, rolling back inserts that lost a race,
-so a burst cannot oversell a slot the way the read-count-append path could."
+before insert and re-checked after with a stable _id sort, rolling back
+inserts that lost a race, so a burst cannot oversell a slot the way the
+read-count-append path could."
 ```
 
 ---
 
-### Task 5: Point the masterclass handlers at Mongo
+### Task 5: Point every registration reader and writer at Mongo
 
-Swap the call sites. This is the task that actually removes the reads.
+Swap **all** the call sites. This is the task that actually removes the reads. There are seven registration readers, not four — `👥 Учасники МК`, `📣`/`/notifymc`, `🎨 МК команди` and `/caught` read `EventRegs` too, and would silently show "nobody registered" if left behind.
+
+Every Mongo-backed handler is wrapped in `mongoGuarded` so a Mongo outage replies «спробуйте за хвилину» instead of becoming an HTTP 500 that Telegram redelivers.
 
 **Files:**
-- Modify: `src/bot.ts` — `handleMasterclasses`, `handleMyRegs`, the `mcreg:` and `mcunreg:` callbacks
-- Modify: `api/cron/mc-reminder.ts:33-46`
-- Test: `tests/mc-handlers.test.mts`
+- Modify: `src/bot.ts` — `handleMasterclasses`, `handleMyRegs`, the `mcreg:` and `mcunreg:` callbacks, `handleTeamMc`, `myOccurrencesToday`, `handleMcAttendees`, `notifyOccurrence`, `renderCaught`, plus the `mongoGuarded` wrapper
+- Modify: `api/cron/mc-reminder.ts`
+- Modify: `src/messages.ts` (add `tryAgainLater`, `mcAttendeeUnknown`)
 
 **Interfaces:**
-- Consumes: `getMasterclasses`, `getMCSchedule`, `getMCTopics`, `getRegistrations`, `registerMongo`, `unregisterMongo` from `src/mc-store.ts`.
-- Note: `buildSlotButtons`, `activeRegs`, `hasActiveRegistrationForSlot` and `topicLines` in `src/masterclasses.ts` are **pure functions over arrays** and stay unchanged. `buildSlotButtons` takes `MCRegistration[]`; `MongoRegistration` is structurally compatible for the fields it reads (`date`, `slot`, `mcId`, `telegramId`) except `cancelled`. Add a mapping helper rather than changing the pure functions.
+- Consumes: `getMasterclasses`, `getMCSchedule`, `getMCTopics`, `getRegistrations`, `registerMongo`, `unregisterMongo`, `asMCRegistrations` from `src/mc-store.ts`; `getVisitorsMongo`, `findVisitorByTelegramIdMongo` from `src/visitor-store.ts`.
+- Note: `buildSlotButtons`, `activeRegs`, `hasActiveRegistrationForSlot` and `topicLines` in `src/masterclasses.ts` are **pure functions over arrays** and stay unchanged; feed them through `asMCRegistrations`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the messages**
 
-Create `tests/mc-handlers.test.mts`, asserting the thing that matters — zero Sheets requests:
+In `src/messages.ts`:
 
 ```typescript
-process.env.BOT_TOKEN = "123:FAKE";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "x@example.com";
-process.env.GOOGLE_PRIVATE_KEY = "x";
-process.env.SHEET_ID = "SHEET_MAIN";
-process.env.MONGO_URI = "mongodb://stub";
+  tryAgainLater: "Тимчасова помилка. Спробуйте ще раз за хвилину.",
+  mcAttendeeUnknown: (id: string) => `невідомий учасник (ID ${id})`,
+```
 
-import { check, report } from "./lib/assert.mts";
-import { google } from "googleapis";
+- [ ] **Step 2: Add the `mongoGuarded` wrapper**
 
-let sheetsRequests = 0;
-(google as unknown as { sheets: unknown }).sheets = () => ({
-  spreadsheets: {
-    values: {
-      batchGet: async ({ ranges }: { ranges: string[] }) => {
-        sheetsRequests++;
-        return { data: { valueRanges: ranges.map(() => ({ values: [] })) } };
-      },
-      update: async () => ({ data: {} }),
-      append: async () => ({ data: {} }),
-    },
-  },
-});
+In `src/bot.ts`, near `safeAnswer`:
 
-const TODAY = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Kyiv" }).format(new Date());
-
-const data: Record<string, Record<string, unknown>[]> = {
-  masterclasses: [
-    { _id: "1", id: "1", title: "Малювання", responsible: "Оля", place: "Намет 1", capacity: 10 },
-  ],
-  mcSchedule: [{ _id: `${TODAY}|12:00-13:00`, date: TODAY, slot: "12:00-13:00", mcIds: ["1"] }],
-  mcTopics: [],
-  registrations: [],
-};
-
-function makeStubDb() {
-  return {
-    collection(name: string) {
-      if (!data[name]) data[name] = [];
-      const rows = () => data[name];
-      const match = (d: Record<string, unknown>, f: Record<string, unknown>) =>
-        Object.entries(f).every(([k, v]) => d[k] === v);
-      return {
-        async createIndex() {},
-        find(f: Record<string, unknown> = {}) {
-          return { async toArray() { return rows().filter((d) => match(d, f)); } };
-        },
-        async countDocuments(f: Record<string, unknown>) { return rows().filter((d) => match(d, f)).length; },
-        async findOne(f: Record<string, unknown>) { return rows().find((d) => match(d, f)) ?? null; },
-        async insertOne(doc: Record<string, unknown>) { rows().push(doc); return { insertedId: "x" }; },
-        async updateOne(f: Record<string, unknown>, u: { $set: Record<string, unknown> }) {
-          const t = rows().find((d) => match(d, f));
-          if (!t) return { modifiedCount: 0 };
-          Object.assign(t, u.$set);
-          return { modifiedCount: 1 };
-        },
-        async deleteMany() { data[name] = []; },
-        async insertMany(docs: Record<string, unknown>[]) { rows().push(...docs); },
-      };
-    },
+```typescript
+/** Wraps a Mongo-backed handler. On failure it logs and answers with M.tryAgainLater
+ *  instead of throwing — there is no global bot.catch, so an uncaught error becomes
+ *  HTTP 500 and Telegram redelivers the same update in a loop. */
+function mongoGuarded<C extends Context>(
+  handler: (ctx: C) => Promise<unknown>,
+): (ctx: C) => Promise<void> {
+  return async (ctx) => {
+    try {
+      await handler(ctx);
+    } catch (err) {
+      console.error("mongo-backed handler failed", err);
+      if (ctx.callbackQuery) await safeAnswer(ctx as never, M.tryAgainLater);
+      await ctx.reply(M.tryAgainLater).catch(() => {});
+    }
   };
 }
-
-const P = "/Users/serhii/projects/discovery-camp/src";
-const mongo = await import(`${P}/mongo.ts`);
-mongo.__setDbForTests(makeStubDb() as never);
-
-const { bot } = await import(`${P}/bot.ts`);
-
-const apiCalls: string[] = [];
-bot.botInfo = {
-  id: 123, is_bot: true, first_name: "T", username: "b",
-  can_join_groups: true, can_read_all_group_messages: false,
-  supports_inline_queries: false, can_connect_to_business: false, has_main_web_app: false,
-} as never;
-bot.api.config.use(async (_p, method: string) => {
-  apiCalls.push(method);
-  return { ok: true, result: { message_id: 1, date: 0, chat: { id: 5, type: "private" } } } as never;
-});
-
-async function run(label: string, update: unknown) {
-  sheetsRequests = 0;
-  apiCalls.length = 0;
-  await bot.handleUpdate(update as never);
-  console.log(`\n${label}\n  sheets requests: ${sheetsRequests}  api: ${apiCalls.join(", ")}`);
-}
-
-const cb = (data: string) => ({
-  update_id: Math.floor(performance.now()),
-  callback_query: {
-    id: "q", from: { id: 555, is_bot: false, first_name: "U" }, chat_instance: "ci",
-    message: { message_id: 1, date: 1, chat: { id: 555, type: "private" as const },
-               from: { id: 123, is_bot: true, first_name: "T" }, text: "x" },
-    data,
-  },
-});
-
-await run("Listing masterclasses", {
-  update_id: 1,
-  message: { message_id: 2, date: 1, chat: { id: 555, type: "private" as const },
-             from: { id: 555, is_bot: false, first_name: "U" }, text: "🎨 Майстер-класи" },
-});
-check("listing costs no Sheets request", sheetsRequests, 0);
-
-await run("Registering", cb(`mcreg:${TODAY}:12:00-13:00:1`));
-check("registering costs no Sheets request", sheetsRequests, 0);
-check("registration stored in Mongo", data.registrations.filter((r) => r.active).length, 1);
-
-await run("Cancelling", cb(`mcunreg:${TODAY}:12:00-13:00:1`));
-check("cancelling costs no Sheets request", sheetsRequests, 0);
-check("registration deactivated", data.registrations.filter((r) => r.active).length, 0);
-
-report();
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [ ] **Step 3: Rewrite `handleMasterclasses`**
 
-Run: `npx tsx tests/mc-handlers.test.mts`
-Expected: FAIL — the handlers still call Sheets, so `sheetsRequests` is greater than 0.
-
-- [ ] **Step 3: Add the registration adapter**
-
-Append to `src/mc-store.ts`:
-
-```typescript
-import { MCRegistration } from "./masterclasses";
-
-/** Adapts Mongo documents to the shape the pure helpers in masterclasses.ts expect
- *  (buildSlotButtons, activeRegs, hasActiveRegistrationForSlot). Those functions are
- *  array-only and stay unchanged; rowIndex and name are unused by them. */
-export function asMCRegistrations(regs: MongoRegistration[]): MCRegistration[] {
-  return regs.map((r) => ({
-    rowIndex: -1,
-    date: r.date,
-    slot: r.slot,
-    mcId: r.mcId,
-    telegramId: r.telegramId,
-    name: "",
-    cancelled: !r.active,
-  }));
-}
-```
-
-- [ ] **Step 4: Rewrite `handleMasterclasses`**
-
-In `src/bot.ts`, replace the body of `handleMasterclasses` with:
+Replace the body with:
 
 ```typescript
 async function handleMasterclasses(ctx: Context) {
@@ -940,9 +684,7 @@ async function handleMasterclasses(ctx: Context) {
 }
 ```
 
-- [ ] **Step 5: Rewrite `handleMyRegs`**
-
-Replace its body with:
+- [ ] **Step 4: Rewrite `handleMyRegs`**
 
 ```typescript
 async function handleMyRegs(ctx: Context) {
@@ -968,17 +710,25 @@ async function handleMyRegs(ctx: Context) {
 }
 ```
 
-- [ ] **Step 6: Rewrite the `mcreg:` callback**
+- [ ] **Step 5: Rewrite the `mcreg:` callback**
 
-Replace its body with — note there is no `loadVisitors()` call, which is what removes the last read:
+The check-in gate **stays**, but checks the Mongo mirror instead of a Sheets read (with the store's built-in Sheets fallback on a miss — rare, since almost everyone is checked in):
 
 ```typescript
-bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, mongoGuarded(async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
   if (date !== todayISO()) return safeAnswer(ctx, M.noMasterclassesToday);
-  const [mcs, topics] = await Promise.all([getMasterclasses(), getMCTopics()]);
+  const [mcs, topics, me] = await Promise.all([
+    getMasterclasses(),
+    getMCTopics(),
+    findVisitorByTelegramIdMongo(ctx.from.id),
+  ]);
   const mc = mcs.find((m) => m.id === mcId);
   if (!mc) return safeAnswer(ctx);
+  if (!me) {
+    await safeAnswer(ctx);
+    return ctx.reply(M.mustCheckInFirst);
+  }
   const result = await registerMongo(date, slot, mcId, mc.capacity, ctx.from.id);
   await safeAnswer(
     ctx,
@@ -995,13 +745,13 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
     await ctx.reply(M.mcRegistered(mc.title, slot, mc.place, topic));
   }
   if (result === "slot_taken") await ctx.reply(M.mcSlotTaken);
-});
+}));
 ```
 
-- [ ] **Step 7: Rewrite the `mcunreg:` callback**
+- [ ] **Step 6: Rewrite the `mcunreg:` callback**
 
 ```typescript
-bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, mongoGuarded(async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
   if (date !== todayISO()) return safeAnswer(ctx, M.noMasterclassesToday);
   const mcs = await getMasterclasses();
@@ -1009,10 +759,124 @@ bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const ok = await unregisterMongo(date, slot, mcId, ctx.from.id);
   await safeAnswer(ctx);
   if (ok && mc) await ctx.reply(M.mcUnregistered(mc.title, slot));
-});
+}));
 ```
 
-- [ ] **Step 8: Update the imports in `src/bot.ts`**
+- [ ] **Step 7: Rewrite `handleTeamMc` and `handleTeamRoster`** (`🎨 МК команди` at `src/bot.ts:962`, `👥 Моя команда` at `src/bot.ts:936`)
+
+Registrations and the member list both come from Mongo. In `handleTeamRoster`, the change is a single line — replace `const { visitors } = await loadVisitors();` with:
+
+```typescript
+  const visitors = await getVisitorsMongo();
+```
+
+The rest of the roster function (including the `isMeaningfulNeed` filtering) is unchanged. Accepted staleness: «Особливі потреби» in this view can lag Sheets until the next `/syncvisitors`; the field rarely changes after registration, and the doctor's QR-scan view still reads the raw cell live from Sheets.
+
+In `handleTeamMc`:
+
+```typescript
+async function handleTeamMc(ctx: Context) {
+  const teams = await myLedTeams(ctx.from!.id);
+  if (!teams) return replyRoleRevoked(ctx, M.notLeader);
+  const [schedule, mcs, regsRaw, visitors] = await Promise.all([
+    getMCSchedule(),
+    getMasterclasses(),
+    getRegistrations(),
+    getVisitorsMongo(),
+  ]);
+  const slots = todaySlots(schedule);
+  if (slots.length === 0) return ctx.reply(M.noMasterclassesToday);
+  const regs = asMCRegistrations(regsRaw);
+  // …the loop body stays exactly as it is, operating on `visitors` and `regs`…
+}
+```
+
+The `for (const team of teams)` loop and everything inside it is unchanged.
+
+- [ ] **Step 8: Rewrite `myOccurrencesToday`** (`src/bot.ts:1014`)
+
+Catalog and schedule from Mongo; the `MCResponsible` role check stays on Sheets (role tabs are out of scope):
+
+```typescript
+async function myOccurrencesToday(telegramId: number): Promise<MCOccurrence[] | null> {
+  const { responsible } = await loadResponsible();
+  const mine = findResponsibleByTelegramId(responsible, telegramId);
+  if (mine.length === 0) return null;
+  const myIds = [...new Set(mine.map((r) => r.mcId))];
+  const [mcs, schedule] = await Promise.all([getMasterclasses(), getMCSchedule()]);
+  const occ: MCOccurrence[] = [];
+  for (const s of todaySlots(schedule)) {
+    for (const id of s.mcIds) {
+      if (!myIds.includes(id)) continue;
+      const mc = mcs.find((m) => m.id === id);
+      if (mc) occ.push({ date: s.date, slot: s.slot, mc });
+    }
+  }
+  return occ;
+}
+```
+
+- [ ] **Step 9: Rewrite `handleMcAttendees`** (`👥 Учасники МК`, `src/bot.ts:1033`)
+
+Mongo registrations store no name, so names are joined from the visitors mirror; an unresolvable ID renders `M.mcAttendeeUnknown` instead of silently disappearing:
+
+```typescript
+async function handleMcAttendees(ctx: Context) {
+  const occ = await myOccurrencesToday(ctx.from!.id);
+  if (occ === null) return replyRoleRevoked(ctx, M.notResponsible);
+  if (occ.length === 0) return ctx.reply(M.noMyMcToday);
+  const [regsRaw, visitors] = await Promise.all([getRegistrations(), getVisitorsMongo()]);
+  const regs = asMCRegistrations(regsRaw);
+  const nameById = new Map(
+    visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v.name]),
+  );
+  const lines: string[] = [];
+  for (const o of occ) {
+    const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+    lines.push(M.mcAttendeesHeader(o.mc.title, o.slot, o.mc.place, taken.length, o.mc.capacity));
+    if (taken.length === 0) lines.push(M.mcNoAttendees);
+    for (const r of taken)
+      lines.push(`• ${nameById.get(r.telegramId) ?? M.mcAttendeeUnknown(r.telegramId)}`);
+    lines.push("");
+  }
+  return ctx.reply(lines.join("\n").trimEnd());
+}
+```
+
+- [ ] **Step 10: Rewrite `notifyOccurrence`** (`src/bot.ts:1064`)
+
+Only the registration fetch changes — messages are sent by `telegramId`, no names needed:
+
+```typescript
+  const regs = asMCRegistrations(await getRegistrations());
+  const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+```
+
+The rest of the function is unchanged.
+
+- [ ] **Step 11: Rewrite `renderCaught`** (`src/bot.ts:1124`)
+
+Same pattern: Mongo registrations plus a name join from the mirror:
+
+```typescript
+  const [regsRaw, catches, visitors] = await Promise.all([
+    getRegistrations(),
+    loadCatches(),
+    getVisitorsMongo(),
+  ]);
+  const regs = asMCRegistrations(regsRaw);
+  const nameById = new Map(
+    visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v.name]),
+  );
+```
+
+…and where the caught list is built, replace `r.name` with `nameById.get(r.telegramId) ?? M.mcAttendeeUnknown(r.telegramId)`.
+
+- [ ] **Step 12: Wrap the registrations**
+
+Wherever these handlers are registered (`bot.command`, `bot.hears`, `bot.callbackQuery`), wrap the Mongo-backed ones: `bot.command("mc", mongoGuarded(handleMasterclasses))`, `bot.hears(BTN.masterclasses, mongoGuarded(handleMasterclasses))`, and likewise for `handleMyRegs`, `handleTeamMc`, `handleTeamRoster`, `handleMcAttendees`, the `mn:` callback, and `/notifymc`/`/caught` command bodies.
+
+- [ ] **Step 13: Update the imports in `src/bot.ts`**
 
 Add:
 
@@ -1027,55 +891,53 @@ import {
   syncMCFromSheets,
   unregisterMongo,
 } from "./mc-store";
+import { findVisitorByTelegramIdMongo, getVisitorsMongo, syncVisitorsFromSheets, upsertVisitorMongo } from "./visitor-store";
 ```
 
-Then remove now-unused imports from `./masterclasses`: `loadMasterclasses`, `loadMCSchedule`, `loadMCTabRows`, `loadMCTopics`, `loadMCRegistrations`, `register`, `unregister`, `activeRegs`. Keep `buildSlotButtons`, `topicLines`, `todaySlots`, `splitResponsibleNames`, `hasActiveRegistrationForSlot`, `Masterclass`. Let `npm run typecheck` tell you exactly which are unused.
+Then remove now-unused imports from `./masterclasses`: `loadMasterclasses`, `loadMCSchedule`, `loadMCTabRows`, `loadMCTopics`, `loadMCRegistrations`, `register`, `unregister`. Keep `activeRegs`, `buildSlotButtons`, `topicLines`, `todaySlots`, `splitResponsibleNames`, `Masterclass`. Let `npm run typecheck` tell you exactly which are unused.
 
-- [ ] **Step 9: Update the reminder cron**
+- [ ] **Step 14: Update the reminder cron**
 
-In `api/cron/mc-reminder.ts`, replace lines 33–46 with:
+In `api/cron/mc-reminder.ts`, the whole data fetch moves to Mongo — including recipients, which come from the visitors mirror (checked in + linked, same filter as today). The cron then costs **zero** Sheets reads:
 
 ```typescript
-  // 1. Schedule and catalog come from Mongo — no Sheets reads for the masterclass data.
+  // 1. Schedule comes from Mongo — no Sheets reads anywhere in this cron.
   const schedule = await getMCSchedule();
 
   // 2. Check if we have any matching slots today. If not, exit immediately.
   const slots = todaySlots(schedule).filter((s) => s.slot.startsWith(before));
   if (slots.length === 0) return res.json({ sent: 0, reason: "no matching slot today" });
 
-  // 3. Only fetch the rest if there is actually a slot to process. Visitors still comes
-  //    from Sheets — that is one read per cron run, not per participant.
-  const [mcs, regsRaw, { visitors }, topics] = await Promise.all([
+  // 3. Only fetch the rest if there is actually a slot to process.
+  const [mcs, regsRaw, visitors, topics] = await Promise.all([
     getMasterclasses(),
     getRegistrations(),
-    loadVisitors(),
+    getVisitorsMongo(),
     getMCTopics(),
   ]);
   const regs = asMCRegistrations(regsRaw);
 ```
 
-Update that file's imports: keep `loadVisitors`, `buildSlotButtons`, `hasActiveRegistrationForSlot`, `todaySlots`, `topicLines`; import `getMasterclasses`, `getMCSchedule`, `getMCTopics`, `getRegistrations`, `asMCRegistrations` from `../../src/mc-store`; drop `loadMasterclasses`, `loadMCRegistrations`, `loadMCSchedule`, `loadMCTabRows`, `loadMCTopics`.
+The recipients block keeps its exact filter logic, reading from `visitors` (the mirror serves the same `Visitor` shape). Update the imports: keep `buildSlotButtons`, `hasActiveRegistrationForSlot`, `todaySlots`, `topicLines` from `../../src/masterclasses`; import `getMasterclasses`, `getMCSchedule`, `getMCTopics`, `getRegistrations`, `asMCRegistrations` from `../../src/mc-store` and `getVisitorsMongo` from `../../src/visitor-store`; drop `loadVisitors` and the `loadMC*` loaders.
 
-- [ ] **Step 10: Run the handler test**
+- [ ] **Step 15: Typecheck**
 
-Run: `npx tsx tests/mc-handlers.test.mts`
-Expected: PASS — all five checks, with `sheets requests: 0` on every line.
+Run: `npm run typecheck`
+Expected: clean.
 
-- [ ] **Step 11: Typecheck and run everything**
-
-Run: `npm run typecheck && npm test`
-Expected: typecheck clean; all suites pass.
-
-- [ ] **Step 12: Commit**
+- [ ] **Step 16: Commit**
 
 ```bash
-git add src/bot.ts src/mc-store.ts api/cron/mc-reminder.ts tests/mc-handlers.test.mts
-git commit -m "feat(mc): serve the masterclass path from Mongo
+git add src/bot.ts src/mc-store.ts src/messages.ts api/cron/mc-reminder.ts
+git commit -m "feat(mc): serve the whole masterclass path from Mongo
 
-Listing, registering, cancelling and 'Мої реєстрації' now cost zero Sheets
-read requests; registration no longer reads Visitors because only the
-Telegram ID is stored. The pure helpers in masterclasses.ts are unchanged
-and fed through an adapter. EventRegs is no longer written."
+Listing, registering, cancelling, 'Мої реєстрації', 'Учасники МК',
+'МК команди', 'Моя команда', /notifymc, /caught and the reminder cron now
+cost zero Sheets read requests. Attendee names are joined from the visitors mirror; the
+check-in gate checks Mongo with a Sheets fallback on miss. Every
+Mongo-backed handler is wrapped so an outage replies 'спробуйте за хвилину'
+instead of becoming a 500 that Telegram redelivers. EventRegs is no longer
+read or written."
 ```
 
 ---
@@ -1086,104 +948,14 @@ and fed through an adapter. EventRegs is no longer written."
 - Modify: `src/schedule.ts:55-94`
 - Modify: `src/mc-store.ts` (add schedule sync/read)
 - Modify: `src/messages.ts`, `src/bot.ts` (add `/syncschedule`)
-- Test: `tests/camp-schedule.test.mts`
 
 **Interfaces:**
 - Produces: `syncCampSchedule(): Promise<number>` (returns slot count) and `getCampSlots(): Promise<{ time: string; activity: string }[]>` from `src/mc-store.ts`.
 - `loadTodaySchedule()` keeps its exact existing signature and `ScheduleResult` shape.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the schedule store functions**
 
-Create `tests/camp-schedule.test.mts`:
-
-```typescript
-process.env.BOT_TOKEN = "x";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "x@example.com";
-process.env.GOOGLE_PRIVATE_KEY = "x";
-process.env.SHEET_ID = "SHEET_MAIN";
-process.env.GRID_SHEET_ID = "GRID";
-process.env.MONGO_URI = "mongodb://stub";
-
-import { check, report } from "./lib/assert.mts";
-import { google } from "googleapis";
-
-// Grid: two header rows, then time in column 8 and activity in column 9.
-const GRID = [
-  [], [],
-  [...Array(8).fill(""), "08:00", "Підйом"],
-  [...Array(8).fill(""), "09:00", "Сніданок"],
-  [...Array(8).fill(""), "", ""],
-];
-
-let sheetsRequests = 0;
-(google as unknown as { sheets: unknown }).sheets = () => ({
-  spreadsheets: {
-    values: {
-      batchGet: async ({ ranges }: { ranges: string[] }) => {
-        sheetsRequests++;
-        return { data: { valueRanges: ranges.map(() => ({ values: GRID })) } };
-      },
-    },
-  },
-});
-
-const data: Record<string, Record<string, unknown>[]> = { campSchedule: [] };
-function makeStubDb() {
-  return {
-    collection(name: string) {
-      if (!data[name]) data[name] = [];
-      return {
-        async deleteMany() { data[name] = []; },
-        async insertMany(docs: Record<string, unknown>[]) { data[name].push(...docs); },
-        async insertOne(doc: Record<string, unknown>) { data[name].push(doc); return { insertedId: "x" }; },
-        find() { return { async toArray() { return data[name]; } }; },
-        async findOne() { return data[name][0] ?? null; },
-      };
-    },
-  };
-}
-
-const P = "/Users/serhii/projects/discovery-camp/src";
-const mongo = await import(`${P}/mongo.ts`);
-mongo.__setDbForTests(makeStubDb() as never);
-
-const { syncCampSchedule } = await import(`${P}/mc-store.ts`);
-const { loadTodaySchedule } = await import(`${P}/schedule.ts`);
-
-console.log("\nBefore any sync:");
-sheetsRequests = 0;
-const empty = await loadTodaySchedule();
-check("reports unavailable", empty.status, "unavailable");
-check("no Sheets request", sheetsRequests, 0);
-
-console.log("\n/syncschedule imports the grid:");
-sheetsRequests = 0;
-check("two slots imported", await syncCampSchedule(), 2);
-check("the sync itself reads Sheets once", sheetsRequests, 1);
-
-console.log("\nAfter sync:");
-sheetsRequests = 0;
-const result = await loadTodaySchedule();
-check("no Sheets request", sheetsRequests, 0);
-check("status ok", result.status, "ok");
-if (result.status === "ok") {
-  check("slot count", result.schedule.slots.length, 2);
-  check("first activity", result.schedule.slots[0].activity, "Підйом");
-  check("blank rows skipped", result.schedule.slots.map((s) => s.time), ["08:00", "09:00"]);
-  check("day label present", result.schedule.dayLabel.length > 0, true);
-}
-
-report();
-```
-
-- [ ] **Step 2: Run it to verify it fails**
-
-Run: `npx tsx tests/camp-schedule.test.mts`
-Expected: FAIL — `syncCampSchedule is not a function`.
-
-- [ ] **Step 3: Add the schedule store functions**
-
-Append to `src/mc-store.ts`:
+Append to `src/mc-store.ts` (merge imports):
 
 ```typescript
 import { config } from "./config";
@@ -1217,7 +989,7 @@ export async function getCampSlots(): Promise<{ time: string; activity: string }
 }
 ```
 
-- [ ] **Step 4: Swap the fetch in `schedule.ts`**
+- [ ] **Step 2: Swap the fetch in `schedule.ts`**
 
 In `src/schedule.ts`, change the import at line 2 from:
 
@@ -1244,16 +1016,11 @@ Then replace lines 67–80 (the fetch and parse) with:
   if (slots.length === 0) return { status: "unavailable" };
 ```
 
-Delete the now-unused `GRID_TAB` constant at the top of `schedule.ts` — it lives in `mc-store.ts` now. Everything else in the function, including the `isCurrent` highlighting, stays exactly as it is.
+Delete the now-unused `GRID_TAB` constant at the top of `schedule.ts` — it lives in `mc-store.ts` now. Everything else in the function, including the `isCurrent` highlighting, stays exactly as it is. Wrap the `🗓 Розклад` handler registration in `mongoGuarded` too.
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 3: Add the message and command**
 
-Run: `npx tsx tests/camp-schedule.test.mts`
-Expected: PASS, all ten checks ok.
-
-- [ ] **Step 6: Add the message and command**
-
-In `src/messages.ts`, after `mcSynced`:
+In `src/messages.ts`, after `visitorsSynced`:
 
 ```typescript
   scheduleSynced: (slots: number) => `Розклад табору оновлено ✅\nПунктів: ${slots}.`,
@@ -1276,15 +1043,15 @@ bot.command("syncschedule", async (ctx) => {
 
 Add `syncCampSchedule` to the `./mc-store` import list.
 
-- [ ] **Step 7: Typecheck and run everything**
+- [ ] **Step 4: Typecheck**
 
-Run: `npm run typecheck && npm test`
-Expected: typecheck clean; all suites pass.
+Run: `npm run typecheck`
+Expected: clean.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/schedule.ts src/mc-store.ts src/messages.ts src/bot.ts tests/camp-schedule.test.mts
+git add src/schedule.ts src/mc-store.ts src/messages.ts src/bot.ts
 git commit -m "feat(schedule): serve the camp schedule from Mongo
 
 The badge grid is read-only, unchanged for the whole camp, and pressed many
@@ -1309,14 +1076,9 @@ The unique index must exist before the first registration. Creating it in `/sync
     await ensureIndexes();
 ```
 
-Add `ensureIndexes` to the `./mc-store` import list.
+Add `ensureIndexes` to the `./mc-store` import list. Re-running `/syncmc` must not error — `createIndex` is idempotent for an identical spec.
 
-- [ ] **Step 2: Verify index creation is idempotent**
-
-Run: `npm test`
-Expected: all suites pass — the stubs implement `createIndex` as a no-op, and re-running `/syncmc` must not error.
-
-- [ ] **Step 3: Document the environment variables**
+- [ ] **Step 2: Document the environment variables**
 
 Add to `README.md` (or `.env.example` if that file exists) under the environment section:
 
@@ -1325,7 +1087,7 @@ MONGO_URI=mongodb+srv://...      # operational store; unset = Sheets only
 MONGO_DB=discovery_camp          # optional, defaults to discovery_camp
 ```
 
-- [ ] **Step 4: Update CLAUDE.md**
+- [ ] **Step 3: Update CLAUDE.md**
 
 In the "Google Sheets schema" section, mark `EventRegs` as retired:
 
@@ -1337,18 +1099,23 @@ In the "Google Sheets schema" section, mark `EventRegs` as retired:
 Add to "Key design notes":
 
 ```markdown
-- **MongoDB is the operational store for masterclasses** (`src/mongo.ts`, `src/mc-store.ts`).
-  The catalog, schedule and topics are imported from `MCSchedule` by `/syncmc`; the camp
-  schedule from the badge grid by `/syncschedule`. Registrations live only in Mongo, where a
-  unique partial index on `(date, slot, telegramId)` over `active: true` makes
-  one-registration-per-slot a database guarantee — the read-count-append race the sheet
-  version had is gone. The Mongo client is created once per lambda and never at module
-  scope. `MONGO_URI` unset means Mongo is not configured; `/syncmc` will fail loudly.
+- **MongoDB is the operational store for masterclasses** (`src/mongo.ts`, `src/mc-store.ts`,
+  `src/visitor-store.ts`). The catalog, schedule and topics are imported from `MCSchedule`
+  by `/syncmc`; the visitors mirror from the Visitors tab by `/syncvisitors` (telegramId
+  lookups only — payment and doctor status are never mirrored, the doctor gate reads Sheets
+  live); the camp schedule from the badge grid by `/syncschedule`. Registrations live only
+  in Mongo, where a unique partial index on `(date, slot, telegramId)` over `active: true`
+  makes one-registration-per-slot a database guarantee — the read-count-append race the
+  sheet version had is gone. Check-in write-throughs to the mirror are best-effort. The
+  Mongo client is created once per lambda and never at module scope. Every Mongo-backed
+  handler goes through `mongoGuarded` (`src/bot.ts`) so an outage replies «спробуйте за
+  хвилину» instead of a 500 that Telegram redelivers. `MONGO_URI` unset means Mongo is not
+  configured; `/syncmc` will fail loudly.
 ```
 
 Also remove the sentence in "Key design notes" that reads "**No database transactions**: concurrent registrations have a small race window — acceptable for camp scale." It is no longer true for registrations.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/bot.ts CLAUDE.md README.md
@@ -1359,26 +1126,34 @@ without any module-scope work. Drops the documented registration race,
 which the unique partial index now prevents."
 ```
 
-- [ ] **Step 6: Deploy and verify against production**
+- [ ] **Step 5: Deploy and verify against production**
 
-This is the step that matters — the plan is worthless if the cutover is wrong.
+This is the step that matters — with no automated tests, this checklist IS the verification. **Do all of it before the 13:00 Kyiv cron firing** (`0 10 * * *` UTC in `vercel.json`).
 
 1. Set `MONGO_URI` and `MONGO_DB` in the Vercel project environment (Production).
-2. Merge to `main` and deploy: `npx vercel --prod`
-3. In Telegram, as an admin, run `/syncmc`. Expect a count matching the `MCSchedule` tab.
-4. Run `/syncschedule`. Expect a count matching the badge grid.
-5. Press `🎨 Майстер-класи` and confirm today's slots and capacities render.
-6. Register for a masterclass, confirm the confirmation message, press `📋 Мої реєстрації`, then cancel.
-7. Confirm in Mongo that `registrations` holds one document with `active: false`.
+2. Merge to `main` and deploy: `npx vercel --prod`, then `npm run set-webhook` if the URL changed.
+3. In Telegram, as an admin, run `/syncmc`. Expect counts matching the `MCSchedule` tab.
+4. Run `/syncvisitors`. Expect a count matching the Visitors tab.
+5. Run `/syncschedule`. Expect a count matching the badge grid.
+6. Press `🗓 Розклад` — today's schedule renders with the current slot highlighted.
+7. Press `🎨 Майстер-класи` and confirm today's slots and capacities render.
+8. Register for a masterclass, confirm the confirmation message, press `📋 Мої реєстрації`, and confirm your own name appears in `👥 Учасники МК` (as a responsible person, or ask one to check).
+9. As a leader (or ask one): `🎨 МК команди` shows the team with your registration listed, and `👥 Моя команда` renders the roster (names, age, room, needs) from the mirror.
+10. Cancel the registration; confirm in Mongo that `registrations` holds one document with `active: false`, and that the slot can be re-registered.
+11. Simulate the un-checked-in path if convenient: an account with no Visitors link tapping a register button gets `mustCheckInFirst`.
 
-**Do all of this before the 13:00 Kyiv cron firing**, not after. If `/syncmc` has not been run, the catalog is empty and every masterclass button will silently vanish from the list — the failure is quiet, which is exactly why it needs checking by hand rather than waiting for a user report.
+If `/syncmc` has not been run, the catalog is empty and every masterclass button silently vanishes from the list — the failure is quiet, which is exactly why it needs checking by hand rather than waiting for a user report. Same for `/syncvisitors`: without it, attendee lists render `невідомий учасник` and the check-in gate falls back to Sheets reads.
 
 ---
 
 ## Self-review notes
 
-**Spec coverage.** Rollout steps 1–2 plus the camp schedule are covered: Mongo connection (Task 2), `/syncmc` and the catalog (Task 3), atomic registrations (Task 4), handler cutover including the reminder cron (Task 5), camp schedule and `/syncschedule` (Task 6), indexes and docs (Task 7). Spec sections deliberately **not** covered here, as agreed: visitors cache, `loadRoleContext`, role tabs, `/syncroles`, videos, `/syncvideo`, team rename and the `teams` collection.
+**Spec coverage.** Rollout steps 1–2, the camp schedule, and a scoped slice of step 3 (visitors mirror for telegramId lookups) are covered. Spec sections deliberately **not** covered, as agreed: check-in name search from Mongo, `loadRoleContext`, role tabs, `/syncroles`, videos, `/syncvideo`, team rename and the `teams` collection. Payment and doctor gates read Sheets live, always.
 
-**Known gap, accepted.** Attendee-name resolution (`👥 Учасники МК`) still reads Visitors from Sheets, since `registrations` stores only `telegramId`. That view is used by responsible persons a handful of times a day, so it stays on Sheets until the visitors cache lands in the post-camp phase. Verify it still works after Task 5 — it consumes `MCRegistration[]` and will need `asMCRegistrations`.
+**All seven registration readers are cut over** — the four beyond the obvious ones (`👥 Учасники МК`, `📣`/`/notifymc`, `🎨 МК команди`, `/caught`) would otherwise silently show "nobody registered" the day after cutover, since nothing writes `EventRegs` anymore.
 
-**Capacity is approximate under concurrency, then corrected.** `registerMongo` checks capacity before inserting and re-checks after, deactivating its own row if it lost. A true guarantee needs a transaction or a seat-counter document; the compensating check keeps the seat count exact without either, at the cost of a rare registrant seeing "full" after a brief success. The duplicate guarantee is exact regardless, because the unique index enforces it.
+**Failure behaviour is implemented, not just specified.** `mongoGuarded` turns a Mongo outage into a polite reply instead of an HTTP 500 redelivery loop — the spec's "Failure behaviour" section made this a requirement precisely because there is no global `bot.catch`.
+
+**Capacity is approximate under concurrency, then corrected deterministically.** `registerMongo` checks capacity before inserting and re-checks after with a stable `_id` sort, deactivating its own row if it lost. The sort matters: without it, two racers could compute different loser sets and either both roll back (undersell, self-heals) or neither (persistent oversell). The duplicate guarantee is exact regardless, because the unique index enforces it.
+
+**Staleness windows, accepted.** The visitors mirror can lag Sheets between syncs; check-in write-through plus the Sheets fallback on gate misses cover the realistic cases (check-in is essentially complete this camp). The `👥 Моя команда` roster reads the mirror too (decision 2026-08-03) — «Особливі потреби» can lag until the next `/syncvisitors`, accepted because the field rarely changes after registration and the doctor's QR-scan view still reads Sheets live. Only the payment and doctor gates are never served from the mirror.
