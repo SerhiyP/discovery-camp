@@ -9,7 +9,6 @@ import {
   linkAndCheckIn,
   loadVisitors,
   renameTeamVideo,
-  renameVisitorTeams,
   searchByName,
   updateTeamVideo,
   videoForTeam,
@@ -32,7 +31,6 @@ import {
   findLeadersByTelegramId,
   loadLeaders,
   removeLeader,
-  renameLeaderTeams,
   searchLeaderByName,
   setLeaderTelegramId,
 } from "./leaders";
@@ -954,12 +952,8 @@ bot.command("renameteam", async (ctx) => {
   const myTeams = [...new Set(mine.map((l) => l.team))];
   if (myTeams.length === 1) {
     const oldTeam = myTeams[0];
-    const [visitorsCount] = await Promise.all([
-      renameVisitorTeams(oldTeam, newName),
-      renameLeaderTeams(oldTeam, newName),
-      renameTeamVideo(oldTeam, newName),
-    ]);
-    return ctx.reply(M.renameTeamDone(oldTeam, newName, visitorsCount));
+    await renameTeamVideo(oldTeam, newName);
+    return ctx.reply(M.renameTeamDone(oldTeam, newName));
   }
   const kb = new InlineKeyboard();
   for (let i = 0; i < myTeams.length; i++) kb.text(myTeams[i], `rt:${i}`).row();
@@ -984,12 +978,8 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
     return ctx.editMessageText(M.notLeader);
   }
   await safeAnswer(ctx);
-  const [visitorsCount] = await Promise.all([
-    renameVisitorTeams(oldTeam, newName),
-    renameLeaderTeams(oldTeam, newName),
-    renameTeamVideo(oldTeam, newName),
-  ]);
-  return ctx.editMessageText(M.renameTeamDone(oldTeam, newName, visitorsCount));
+  await renameTeamVideo(oldTeam, newName);
+  return ctx.editMessageText(M.renameTeamDone(oldTeam, newName));
 });
 
 // --- leader team views ---

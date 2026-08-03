@@ -131,8 +131,8 @@ export const M = {
   notifyTeamSent: (count: number, teams: string) =>
     `Надіслано ${count} учасникам команд: ${teams} ✅`,
   renameTeamNoText: "Використання: /renameteam <нова назва>",
-  renameTeamDone: (oldName: string, newName: string, count: number) =>
-    `Команду «${oldName}» перейменовано на «${newName}» ✅ Оновлено ${count} учасників.`,
+  renameTeamDone: (oldName: string, newName: string) =>
+    `Команду «${oldName}» перейменовано на «${newName}» ✅`,
   chooseTeamToRename: (newName: string) => `Яку команду перейменувати на «${newName}»?`,
   videoUpdated: (team: string) => `Відео для команди «${team}» оновлено ✅`,
   videoMultiTeamHint: (teams: string) =>

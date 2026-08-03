@@ -94,14 +94,3 @@ export async function removeLeader(team: string, name: string): Promise<boolean>
 }
 
 /** Updates Team column in Leaders tab for all rows matching oldName. Returns count updated. */
-export async function renameLeaderTeams(oldName: string, newName: string): Promise<number> {
-  const { leaders, cols } = await loadLeaders();
-  let count = 0;
-  for (const l of leaders) {
-    if (l.team.toLowerCase() === oldName.toLowerCase()) {
-      await updateCell(config.leadersTab, l.rowIndex, cols.team, newName);
-      count++;
-    }
-  }
-  return count;
-}
