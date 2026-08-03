@@ -46,7 +46,8 @@ means the request still happens and moving the others saves nothing.
 | **Registrations** | **Mongo, only copy** | `EventRegs` is retired; nothing writes it |
 | Visitors | Sheets (Forms + Аня + staff) | cache; a miss falls back to a Sheets read |
 | Payment + doctor gate | Sheets | **never cached** — read live |
-| Leaders, MCResponsible, Admins, Videos | Sheets | cache; refreshed by `/syncroles` and written through on every bot write |
+| Leaders, MCResponsible, Admins | Sheets | cache; refreshed by `/syncroles` and written through on every bot write |
+| **Videos** | **Mongo, only copy** | leaders write it by sending a video; the tab is imported once and then unused |
 | Badge-grid schedule | Sheets (`gridSheetId`) | not cached — out of scope |
 
 The Visitors row is the important one. The bot never writes `Статус оплати`; Аня marks it
@@ -134,12 +135,45 @@ runs `/syncroles`. CLAUDE.md currently documents "tell the leader to press `/sta
 supported way to hand out newly added buttons, and needs updating to say `/syncroles`
 first.
 
+### Team videos
+
+`videos` is Mongo-owned, not a cache. A `file_id` is an opaque Telegram string with no
+value to anyone reading a spreadsheet, so the tab has no human reader.
+
+Leaders set their own team's video by sending one to the bot, exactly as today. There is
+no admin command and no pasting a `file_id` into a sheet — that route is removed. A team
+whose leader never sends one falls back to `DEFAULT_VIDEO_FILE_ID`, so no team ends up
+with nothing.
+
+The `Videos` tab is imported into Mongo **once**, during rollout, and is not read or
+written afterwards.
+
+### Renaming a team
+
+Renaming currently costs one Sheets write **per team member** (`checkin.ts:232` loops
+`updateCell` over every visitor on the team), against the 60-writes-per-minute quota. It
+is the same shape as the per-name loop that made `/syncresp` exhaust the quota on its own.
+`linkResponsibleRows` has the same problem.
+
+Two changes, independent of each other:
+
+- Add a `batchUpdateCells` helper over `values.batchUpdate`, which writes many cells in one
+  request. This fixes rename-team and `linkResponsibleRows` whether or not Mongo lands,
+  and is worth doing on its own.
+- With visitors in Mongo the rename itself becomes a single `updateMany` — atomic and free
+  of quota — and the Sheets write becomes one batched mirror call.
+
+The rename still writes Sheets. Staff assign and read teams in the Visitors tab, so a
+Mongo-only rename would leave the sheet disagreeing with the bot.
+
 ### Admin commands
 
 - `/syncmc` — re-read `MCSchedule`, replace catalog, schedule and topics. Reports counts.
 - `/syncvisitors` — refresh the visitor cache from the Visitors tab.
-- `/syncroles` — refresh `leaders`, `responsible`, `admins` and `videos` from their tabs.
-  Needed after editing a role tab by hand.
+- `/syncroles` — refresh `leaders`, `responsible` and `admins` from their tabs. Needed
+  after editing a role tab by hand. **Deliberately excludes `videos`**: Mongo owns that
+  collection, so replacing it from the sheet would discard videos leaders have set since
+  the import.
 There is no registration export. Registrations live in Mongo and stay there.
 
 All three are admin-gated and typed-only, following the `/syncresp` precedent.
@@ -173,6 +207,9 @@ Following the pattern established by the quota work — stubbed drivers, no live
 - The payment gate reads Sheets even when the visitor is cached.
 - Cancelling frees the slot: re-registering for the same slot after a cancel succeeds.
 - A role granted through the bot is effective immediately (write-through), without a sync.
+- `/syncroles` leaves `videos` untouched: a video set by a leader survives a re-sync.
+- A team with no video falls back to `DEFAULT_VIDEO_FILE_ID`.
+- Renaming a team with many members issues one Sheets write request, not one per member.
 - `/start` for a checked-in visitor issues no Sheets request at all — the measurable
   restatement of the "zero on the common path" goal, in the style of the existing
   `checkin-reads` suite.
@@ -190,6 +227,10 @@ The camp is live, so ordering matters:
 4. Switch `loadRoleContext` to Mongo and add write-through on the role write paths. Last
    because it is the change that touches every command, and because until it lands the
    earlier steps have not yet reduced `/start` to zero.
+5. Import the `Videos` tab once and switch video lookup and leader video updates to Mongo.
+
+`batchUpdateCells` and the rename-team fix are independent of all five steps and can ship
+first — they reduce write-quota pressure immediately.
 
 Each step is independently revertible.
 
