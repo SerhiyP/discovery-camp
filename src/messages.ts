@@ -175,6 +175,7 @@ export const M = {
     `Меню команд оновлено ✅\nАдміністраторів: ${admins}, лідерів: ${leaders}.`,
   mcSynced: (mcs: number, slots: number, topics: number) =>
     `Каталог МК оновлено ✅\nМайстер-класів: ${mcs}, слотів: ${slots}, тем: ${topics}.`,
+  visitorsSynced: (count: number) => `Учасників синхронізовано ✅\nЗаписів: ${count}.`,
   syncFailed: "Не вдалося синхронізувати. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",

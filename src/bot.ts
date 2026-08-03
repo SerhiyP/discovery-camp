@@ -55,6 +55,8 @@ import {
 } from "./responsible";
 import { loadCatches, logCatch } from "./phishing";
 import { syncMCFromSheets } from "./mc-store";
+import { mongoEnabled } from "./mongo";
+import { syncVisitorsFromSheets, upsertVisitorMongo } from "./visitor-store";
 
 export const bot = new Bot(config.botToken);
 
@@ -314,6 +316,15 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   const { ok, visitor } = await linkAndCheckIn(sheet, rowIndex, ctx.from.id);
   if (!ok || !visitor) {
     return tryTelegram("editMessageText", () => ctx.editMessageText(M.rowTaken));
+  }
+
+  if (mongoEnabled()) {
+    // Best-effort: check-in is Sheets-owned and must not break on a Mongo outage.
+    upsertVisitorMongo({
+      ...visitor,
+      telegramId: String(ctx.from.id),
+      checkedIn: visitor.checkedIn || nowStamp(),
+    }).catch((err) => console.error("visitor write-through failed", err));
   }
 
   await tryTelegram("deleteMessage", () => ctx.deleteMessage());
@@ -817,6 +828,17 @@ bot.command("syncmc", async (ctx) => {
     return ctx.reply(M.mcSynced(counts.masterclasses, counts.slots, counts.topics));
   } catch (err) {
     console.error("syncmc failed", err);
+    return ctx.reply(M.syncFailed);
+  }
+});
+
+bot.command("syncvisitors", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  try {
+    return ctx.reply(M.visitorsSynced(await syncVisitorsFromSheets()));
+  } catch (err) {
+    console.error("syncvisitors failed", err);
     return ctx.reply(M.syncFailed);
   }
 });
