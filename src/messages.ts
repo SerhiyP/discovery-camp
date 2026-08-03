@@ -31,6 +31,14 @@ export const M = {
     "Цей учасник уже відмітився з іншого акаунта. Якщо це помилка — зверніться до організаторів.",
   checkedIn: (name: string, room?: string) =>
     `Готово, ${name}! Ви відмічені ✅${room ? `\nВаша кімната: ${room}` : ""}\nГарного табору! 🎉`,
+  // Shown in /help so a participant can self-check they're linked to the right row —
+  // catches a mis-link at a glance instead of only surfacing at check-in time.
+  helpYourInfo: (opts: { name: string; team?: string; room?: string }) => {
+    const lines = [`👤 Ви: ${opts.name}`];
+    if (opts.team) lines.push(`Група: ${opts.team}`);
+    if (opts.room) lines.push(`Кімната: ${opts.room}`);
+    return lines.join("\n");
+  },
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
 
   // --- staged check-in: doctor QR -> Аня -> final message ---

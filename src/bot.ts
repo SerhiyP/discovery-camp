@@ -192,15 +192,20 @@ bot.command("myid", async (ctx) => {
 });
 
 bot.command("help", async (ctx) => {
-  const roles = await getUserRoles(ctx.from!.id);
+  const { visitor, roles } = await loadRoleContext(ctx.from!.id);
   if (!roles.isVisitor && !roles.isLeader && !roles.isResponsible) {
     return ctx.reply(`${M.generalInfo}\n\n${M.mustCheckInFirst}`);
   }
   // Roles are already loaded here, so send the matching keyboard along — this is how
   // someone whose role was added straight in the sheet picks up their buttons.
   const kb = keyboardFromRoles(roles);
+  // Visitor info is shown first so a mis-linked row (wrong name/team) is caught by the
+  // person reading it, not just by whoever notices the sheet later.
+  const infoLine = visitor
+    ? M.helpYourInfo({ name: visitor.name, team: visitor.team, room: visitor.room })
+    : undefined;
   return ctx.reply(
-    `${roleCapabilitiesText(roles)}\n\n${M.infoChannel}`,
+    [infoLine, roleCapabilitiesText(roles), M.infoChannel].filter(Boolean).join("\n\n"),
     kb ? { reply_markup: kb } : {},
   );
 });
