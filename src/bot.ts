@@ -1217,12 +1217,16 @@ bot.on("message:text", async (ctx) => {
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
 });
 
-// Set scoped command menus for all known privileged users on cold start.
-(async () => {
-  try {
-    const [{ admins }, { leaders }] = await Promise.all([loadAdmins(), loadLeaders()]);
-    await initCommandMenus(bot, admins, leaders);
-  } catch {
-    // Non-fatal: menus fall back to defaults if sheets are temporarily unavailable.
-  }
-})();
+// Scoped command menus are NOT rebuilt on cold start. Telegram stores them server-side
+// permanently, and they are already updated incrementally whenever a role changes (see
+// /leader, /addadmin, /removeadmin), so rebuilding cost a Sheets read plus one Telegram
+// call per admin and leader on every new serverless instance — paid concurrently by
+// every lambda a check-in rush spins up, delaying the webhook it was started to serve.
+// Use /syncmenus if the menus ever need reconciling with the sheets by hand.
+bot.command("syncmenus", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  const { leaders } = await loadLeaders();
+  await initCommandMenus(bot, admins, leaders);
+  return ctx.reply(M.menusSynced(admins.length, leaders.length));
+});
