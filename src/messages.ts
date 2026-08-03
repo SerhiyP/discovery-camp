@@ -20,9 +20,9 @@ export const M = {
   welcome: "Вітаємо в Discovery Camp! 🏕\n\n" + GENERAL_INFO,
   alreadyLinked: (name: string) => `Ви вже відмічені як ${name} ✅`,
   askName: "Напишіть своє прізвище та ім'я — так, як у формі реєстрації.",
-  // Plain URL, no parse_mode — Telegram auto-links it. The channel is public despite
-  // the t.me/c/ form, so the link opens for non-members too (verified 2026-08-02).
-  infoChannel: "📢 Важлива інформація про табір:\nhttps://t.me/c/3954616904/266",
+  // Plain URL, no parse_mode — Telegram auto-links it. Public @username form, so it
+  // opens for non-members and points at the channel rather than one pinned post.
+  infoChannel: "📢 Важлива інформація про табір:\nhttps://t.me/ourdiscoverycamp",
   chooseYourself: "Знайшли кілька збігів. Натисніть на своє ім'я 👇",
   confirmOne: "Це ви? Натисніть, щоб підтвердитись 👇",
   notFound:
