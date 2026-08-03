@@ -66,6 +66,8 @@ teams           { _id: teamId, name }
 campSchedule    { _id: "grid", slots: [{ time, activity }] }
 registrations   { date, slot, mcId, telegramId, registeredAt,
                   active: true, cancelledAt }
+mcSeats         { _id: "<date>|<slot>|<mcId>", taken }   // atomic capacity counter
+
 ```
 
 Indexes:
@@ -108,9 +110,11 @@ fallback-on-miss covers the window in between.
 Zero Sheets reads:
 
 1. Catalog, schedule and capacity come from Mongo.
-2. Insert into `registrations`. The unique index rejects a duplicate; a conditional insert
-   guarded by a capacity count rejects an overfull slot. Two people cannot take the last
-   seat.
+2. Take a seat atomically: `findOneAndUpdate` on the `mcSeats` counter with
+   `taken: { $lt: capacity }` and `$inc` — atomic on one document, so two people cannot
+   take the last seat. Then insert into `registrations`; the unique index rejects a
+   duplicate, and a rejected insert returns its seat. `/syncmc` rebuilds counters from
+   active registrations, healing any crash-window drift (which only ever undersells).
 3. Reply. There is no Sheets write at all — registration touches neither the read nor the
    write quota.
 

@@ -37,7 +37,7 @@ A single shared client, safe for serverless.
 - Produces:
   - `db(): Promise<Db>` — the shared database handle, connecting on first use.
   - `mongoEnabled(): boolean` — whether `MONGO_URI` is configured.
-  - `COLLECTIONS` — `{ masterclasses, mcSchedule, mcTopics, registrations, visitors, campSchedule }`.
+  - `COLLECTIONS` — `{ masterclasses, mcSchedule, mcTopics, registrations, visitors, mcSeats, campSchedule }`.
 
 - [ ] **Step 1: Install the driver**
 
@@ -70,6 +70,7 @@ export const COLLECTIONS = {
   mcTopics: "mcTopics",
   registrations: "registrations",
   visitors: "visitors",
+  mcSeats: "mcSeats",
   campSchedule: "campSchedule",
 } as const;
 
@@ -450,8 +451,9 @@ The core of the change. Registration becomes a Mongo insert guarded by a unique 
   - `ensureIndexes(): Promise<void>`
   - `MongoRegistration` — `{ date: string; slot: string; mcId: string; telegramId: string; active: boolean }`
   - `getRegistrations(): Promise<MongoRegistration[]>`
-  - `registerMongo(date, slot, mcId, capacity, telegramId): Promise<RegisterResult>` — `RegisterResult` is the existing `"ok" | "full" | "already" | "slot_taken"` from `src/masterclasses.ts`
-  - `unregisterMongo(date, slot, mcId, telegramId): Promise<boolean>`
+  - `registerMongo(date, slot, mcId, capacity, telegramId): Promise<RegisterResult>` — `RegisterResult` is the existing `"ok" | "full" | "already" | "slot_taken"` from `src/masterclasses.ts`. Capacity is enforced by an atomic per-(date, slot, mcId) counter in the `mcSeats` collection (`takeSeat`/`returnSeat`, module-private), not by count-then-insert.
+  - `unregisterMongo(date, slot, mcId, telegramId): Promise<boolean>` — gives the seat back on success.
+  - `rebuildSeatCounters(): Promise<void>` — recomputes `mcSeats` from active registrations; called at the end of `syncMCFromSheets` so every `/syncmc` heals counter drift.
   - `asMCRegistrations(regs: MongoRegistration[]): MCRegistration[]` — adapter for the pure helpers.
 
 - [ ] **Step 1: Implement the registration functions**
@@ -511,6 +513,74 @@ export function asMCRegistrations(regs: MongoRegistration[]): MCRegistration[] {
   }));
 }
 
+// ── Seat counters ────────────────────────────────────────────────────────────
+// Capacity is enforced by a per-(date, slot, mcId) counter document in `mcSeats`:
+// `findOneAndUpdate` with `taken: { $lt: capacity }` and `$inc` is atomic on a
+// single document, so overselling is impossible by construction — no post-insert
+// re-check, no rollback, no ordering assumptions. (An earlier design compensated
+// after insert with an _id-sorted rollback; ObjectIds from different lambdas in
+// the same second sort by random bytes, so racers could disagree about who
+// overflowed and both keep their seats. Reviewed and replaced 2026-08-03.)
+// Drift (a crash between a seat-take and its registration insert leaks a seat)
+// only ever undersells and is healed by /syncmc, which rebuilds the counters
+// from active registrations.
+
+/** Atomically takes one seat. Returns false when the MC is full. */
+async function takeSeat(
+  date: string,
+  slot: string,
+  mcId: string,
+  capacity: number,
+): Promise<boolean> {
+  const col = (await db()).collection(COLLECTIONS.mcSeats);
+  const key = `${date}|${slot}|${mcId}`;
+  const inc = () =>
+    col.findOneAndUpdate(
+      { _id: key as never, taken: { $lt: capacity } },
+      { $inc: { taken: 1 } },
+    );
+  if (await inc()) return true;
+  // No matching doc: the MC is full, or the counter doesn't exist yet.
+  try {
+    const created = await col.updateOne(
+      { _id: key as never },
+      { $setOnInsert: { taken: 1 } },
+      { upsert: true },
+    );
+    if (created.upsertedCount === 1) return true;
+  } catch (err) {
+    // Lost the create race to another lambda — fall through and increment theirs.
+    if ((err as { code?: number }).code !== 11000) throw err;
+  }
+  return (await inc()) !== null;
+}
+
+/** Gives a seat back. Floored at zero: counters rebuilt by /syncmc may already
+ *  account for this cancellation. */
+async function returnSeat(date: string, slot: string, mcId: string): Promise<void> {
+  const col = (await db()).collection(COLLECTIONS.mcSeats);
+  await col.updateOne(
+    { _id: `${date}|${slot}|${mcId}` as never, taken: { $gt: 0 } },
+    { $inc: { taken: -1 } },
+  );
+}
+
+/** Rebuilds seat counters from active registrations. Heals any drift left by a
+ *  crash between a seat-take and its registration insert. Called by /syncmc. */
+export async function rebuildSeatCounters(): Promise<void> {
+  const database = await db();
+  const counts = await database
+    .collection(COLLECTIONS.registrations)
+    .aggregate([
+      { $match: { active: true } },
+      { $group: { _id: { $concat: ["$date", "|", "$slot", "|", "$mcId"] }, taken: { $sum: 1 } } },
+    ])
+    .toArray();
+  const seats = database.collection(COLLECTIONS.mcSeats);
+  await seats.deleteMany({});
+  if (counts.length) await seats.insertMany(counts as never);
+}
+
 export async function registerMongo(
   date: string,
   slot: string,
@@ -522,12 +592,10 @@ export async function registerMongo(
   const id = String(telegramId);
 
   const existing = await col.findOne({ date, slot, telegramId: id, active: true });
-  if (existing) return existing.mcId === mcId ? "already" : "slot_taken";
+  if (existing) return String(existing.mcId) === mcId ? "already" : "slot_taken";
 
-  if (capacity > 0) {
-    const taken = await col.countDocuments({ date, slot, mcId, active: true });
-    if (taken >= capacity) return "full";
-  }
+  const seated = capacity > 0 ? await takeSeat(date, slot, mcId, capacity) : true;
+  if (!seated) return "full";
 
   try {
     await col.insertOne({
@@ -535,37 +603,18 @@ export async function registerMongo(
       registeredAt: nowStamp(), cancelledAt: "",
     } as never);
   } catch (err) {
-    // The unique index rejected a concurrent insert for the same person and slot.
-    // This is the race the sheet-backed version could not close.
     if ((err as { code?: number }).code === 11000) {
+      // The unique index rejected a concurrent insert for the same person and
+      // slot — give our seat back and report what the winner holds.
+      if (capacity > 0) await returnSeat(date, slot, mcId).catch(() => {});
       const now = await col.findOne({ date, slot, telegramId: id, active: true });
-      return now?.mcId === mcId ? "already" : "slot_taken";
+      if (!now) return "full";
+      return String(now.mcId) === mcId ? "already" : "slot_taken";
     }
+    // Any other insert failure: return the seat, then rethrow — mongoGuarded
+    // turns it into a "спробуйте за хвилину" reply.
+    if (capacity > 0) await returnSeat(date, slot, mcId).catch(() => {});
     throw err;
-  }
-
-  // Capacity is checked before the insert, so a burst can still overshoot by the number
-  // of inserts in flight. Re-check afterwards and roll back the losers, which keeps the
-  // seat count exact without a transaction. The sort is load-bearing: find() without a
-  // sort has no guaranteed order, so two racers could each compute a different loser set
-  // (both roll back, or neither does). _id is insertion-ordered, so sorting by it makes
-  // every racer agree on who overflowed.
-  if (capacity > 0) {
-    const taken = await col.countDocuments({ date, slot, mcId, active: true });
-    if (taken > capacity) {
-      const all = await col
-        .find({ date, slot, mcId, active: true })
-        .sort({ _id: 1 })
-        .toArray();
-      const overflow = all.slice(capacity).some((d) => String(d.telegramId) === id);
-      if (overflow) {
-        await col.updateOne(
-          { date, slot, telegramId: id, active: true },
-          { $set: { active: false, cancelledAt: nowStamp() } },
-        );
-        return "full";
-      }
-    }
   }
 
   return "ok";
@@ -582,26 +631,40 @@ export async function unregisterMongo(
     { date, slot, mcId, telegramId: String(telegramId), active: true },
     { $set: { active: false, cancelledAt: nowStamp() } },
   );
-  return res.modifiedCount > 0;
+  if (res.modifiedCount === 0) return false;
+  // Guarded at zero inside returnSeat; a decrement for an unlimited MC (no
+  // counter doc) matches nothing and is a no-op.
+  await returnSeat(date, slot, mcId).catch(() => {});
+  return true;
 }
 ```
 
-- [ ] **Step 2: Typecheck**
+- [ ] **Step 2: Wire counter healing into the catalog sync**
+
+At the end of `syncMCFromSheets` (before its `return`), add:
+
+```typescript
+  await rebuildSeatCounters();
+```
+
+Also add `mcSeats: "mcSeats"` to `COLLECTIONS` in `src/mongo.ts` (after `visitors`).
+
+- [ ] **Step 3: Typecheck**
 
 Run: `npm run typecheck`
 Expected: clean.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/mc-store.ts
+git add src/mc-store.ts src/mongo.ts
 git commit -m "feat(mc): registrations in Mongo with atomic capacity
 
 A unique partial index on (date, slot, telegramId) over active documents
-makes one-registration-per-slot a database guarantee. Capacity is checked
-before insert and re-checked after with a stable _id sort, rolling back
-inserts that lost a race, so a burst cannot oversell a slot the way the
-read-count-append path could."
+makes one-registration-per-slot a database guarantee. Capacity is a
+per-(date,slot,mcId) seat counter taken with a guarded atomic \$inc, so a
+burst cannot oversell a slot; cancel returns the seat and /syncmc rebuilds
+counters from active registrations to heal any crash-window drift."
 ```
 
 ---
@@ -1154,6 +1217,6 @@ If `/syncmc` has not been run, the catalog is empty and every masterclass button
 
 **Failure behaviour is implemented, not just specified.** `mongoGuarded` turns a Mongo outage into a polite reply instead of an HTTP 500 redelivery loop — the spec's "Failure behaviour" section made this a requirement precisely because there is no global `bot.catch`.
 
-**Capacity is approximate under concurrency, then corrected deterministically.** `registerMongo` checks capacity before inserting and re-checks after with a stable `_id` sort, deactivating its own row if it lost. The sort matters: without it, two racers could compute different loser sets and either both roll back (undersell, self-heals) or neither (persistent oversell). The duplicate guarantee is exact regardless, because the unique index enforces it.
+**Capacity is exact under concurrency.** The first design compensated after insert with an `_id`-sorted rollback; review showed ObjectIds from different lambdas in the same second sort by random bytes, so racers could disagree about who overflowed and a burst could still oversell. Replaced (2026-08-03, approved) with an atomic per-(date, slot, mcId) seat counter: `findOneAndUpdate({ taken: { $lt: capacity } }, { $inc: { taken: 1 } })` is atomic on one document, so overselling is impossible by construction. The only drift mode is a leaked seat (undersell) from a crash between seat-take and insert; `/syncmc` rebuilds counters from active registrations. The duplicate guarantee is exact regardless, because the unique index enforces it.
 
 **Staleness windows, accepted.** The visitors mirror can lag Sheets between syncs; check-in write-through plus the Sheets fallback on gate misses cover the realistic cases (check-in is essentially complete this camp). The `👥 Моя команда` roster reads the mirror too (decision 2026-08-03) — «Особливі потреби» can lag until the next `/syncvisitors`, accepted because the field rarely changes after registration and the doctor's QR-scan view still reads Sheets live. Only the payment and doctor gates are never served from the mirror.
