@@ -27,14 +27,15 @@ CLAUDE.md currently documents this as accepted.
   and already cost one batched request. Moving them buys nothing.
 - Removing Sheets. It stays the human-facing surface and the source of truth for
   everything humans and Google Forms write.
-- A Sheets fallback path for registration writes. See "Failure behaviour".
+- A Sheets fallback path for registration when Mongo is unavailable. See
+  "Failure behaviour".
 
 ## Data ownership
 
 | Data | Source of truth | Mongo's role |
 |---|---|---|
 | MC catalog, schedule, topics | Sheets `MCSchedule` | synced copy, refreshed by `/syncmc` |
-| **Registrations** | **Mongo** | authoritative; `EventRegs` is an export mirror |
+| **Registrations** | **Mongo, only copy** | `EventRegs` is retired; nothing writes it |
 | Visitors | Sheets (Forms + Аня + staff) | cache; a miss falls back to a Sheets read |
 | Payment + doctor gate | Sheets | **never cached** — read live |
 | Leaders, Admins, MCResponsible, Videos | Sheets | unchanged |
@@ -52,7 +53,7 @@ mcTopics        { _id: "<date>|<mcId>", date, mcId, topic }
 visitors        { _id: rowIndex, name, nameNorm: [], age, room, team,
                   specialNeeds, telegramId, checkedIn }
 registrations   { date, slot, mcId, telegramId, registeredAt,
-                  active: true, cancelledAt, pendingExport }
+                  active: true, cancelledAt }
 ```
 
 Indexes:
@@ -63,8 +64,7 @@ Indexes:
   predicate on `cancelledAt: null` would also match documents where the field is absent
   and is easy to get subtly wrong. Cancelling sets `active: false`, which frees the slot
   for re-registration while keeping `cancelledAt` for the record.
-- `registrations`: `(date, slot, mcId)` for capacity counts, and `pendingExport` for the
-  export sweep.
+- `registrations`: `(date, slot, mcId)` for capacity counts.
 - `visitors`: `telegramId`, and `nameNorm` for prefix search.
 
 `visitors._id` is the sheet row index, which is what the existing `updateCell` write path
@@ -94,19 +94,17 @@ Zero Sheets reads:
 2. Insert into `registrations`. The unique index rejects a duplicate; a conditional insert
    guarded by a capacity count rejects an overfull slot. Two people cannot take the last
    seat.
-3. Attempt the `EventRegs` append immediately so the sheet normally stays live. If it
-   fails or is rate-limited, set `pendingExport: true` and **still reply successfully** —
-   the registration is already durable in Mongo.
+3. Reply. There is no Sheets write at all — registration touches neither the read nor the
+   write quota.
 
 The participant's name is not needed here. `registrations` stores `telegramId`; names are
-resolved from the visitor cache when rendering attendee lists or exporting.
+resolved from the visitor cache when rendering attendee lists.
 
 ### Admin commands
 
 - `/syncmc` — re-read `MCSchedule`, replace catalog, schedule and topics. Reports counts.
 - `/syncvisitors` — refresh the visitor cache from the Visitors tab.
-- `/exportregs` — flush every `pendingExport` registration to `EventRegs` in a single
-  `appendRows` call, then clear the flag.
+There is no registration export. Registrations live in Mongo and stay there.
 
 All three are admin-gated and typed-only, following the `/syncresp` precedent.
 
@@ -137,7 +135,7 @@ Following the pattern established by the quota work — stubbed drivers, no live
 - Duplicate registration for the same slot is rejected by the index, not by a read.
 - Name-search miss falls back to Sheets and populates the cache.
 - The payment gate reads Sheets even when the visitor is cached.
-- `pendingExport` rows flush in one `appendRows` call and the flag clears.
+- Cancelling frees the slot: re-registering for the same slot after a cancel succeeds.
 - The three existing suites (`batch`, `checkin-reads`, `qr-recovery`) stay green.
 
 ## Rollout
@@ -152,8 +150,14 @@ The camp is live, so ordering matters:
 
 Each step is independently revertible.
 
-## Open question
+## Retiring EventRegs
 
-Whether `EventRegs` needs to stay near-live at all. If a daily export is acceptable, step 3
-of the registration flow collapses to just setting `pendingExport`, and the immediate
-append disappears entirely.
+The `EventRegs` tab stops being written and stops being read. Every view humans need is
+already in the bot — `📋 Мої реєстрації`, `👥 Учасники МК`, `🎨 МК команди` — so nothing
+depends on the tab during camp.
+
+Mongo therefore becomes the only copy of registration data. That is a deliberate choice.
+The tab itself is left in place rather than deleted, so any pre-Mongo rows stay readable.
+
+CLAUDE.md documents `EventRegs` as a bot-managed tab and records the registration race
+window as accepted; both need updating as part of this work.
