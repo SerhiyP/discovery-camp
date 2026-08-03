@@ -1,5 +1,5 @@
 import { config, nowStamp } from "./config";
-import { appendRow, clearRow, getRows, headerIndex, updateCell } from "./sheets";
+import { appendRow, appendRows, clearRow, getRows, headerIndex, updateCell } from "./sheets";
 
 export interface Responsible {
   rowIndex: number;
@@ -98,6 +98,35 @@ export async function addResponsible(
   }
   await appendRow(config.responsibleTab, [mcId, name, "", nowStamp()]);
   return "ok";
+}
+
+/** Bulk variant of addResponsible: one read and one append for the whole catalog
+ *  instead of a read + append per name. /syncresp can carry 60+ names, which on its
+ *  own exhausts both the read and the write quota (60/minute/user each).
+ *  Results are returned aligned with `entries`; duplicates within the batch itself
+ *  are reported as "duplicate" after the first occurrence. */
+export async function addResponsibleMany(
+  entries: { mcId: string; name: string }[],
+): Promise<("ok" | "duplicate")[]> {
+  const { responsible } = await loadResponsible();
+  const key = (mcId: string, name: string) => JSON.stringify([mcId, normalizeStr(name)]);
+  const seen = new Set(responsible.map((r) => key(r.mcId, r.name)));
+
+  const results: ("ok" | "duplicate")[] = [];
+  const newRows: string[][] = [];
+  const stamp = nowStamp();
+  for (const { mcId, name } of entries) {
+    const k = key(mcId, name);
+    if (seen.has(k)) {
+      results.push("duplicate");
+      continue;
+    }
+    seen.add(k);
+    newRows.push([mcId, name, "", stamp]);
+    results.push("ok");
+  }
+  await appendRows(config.responsibleTab, newRows);
+  return results;
 }
 
 export async function removeResponsibleByRow(rowIndex: number): Promise<void> {

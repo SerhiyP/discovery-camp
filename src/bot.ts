@@ -46,6 +46,7 @@ import { initCommandMenus, setCommandsForUser } from "./commands";
 import { BTN, roleKeyboard } from "./keyboards";
 import {
   addResponsible,
+  addResponsibleMany,
   findResponsibleByTelegramId,
   linkResponsibleRows,
   loadResponsible,
@@ -58,19 +59,38 @@ export const bot = new Bot(config.botToken);
 
 const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
 
-async function getUserRoles(
-  telegramId: number,
-): Promise<{ isVisitor: boolean; isLeader: boolean; isResponsible: boolean }> {
-  const [{ leaders }, { responsible }, { visitors }] = await Promise.all([
+/** Everything the three role sheets say about one person, from a single batched read.
+ *  Handlers that need both a role check and the underlying rows (check-in, /start,
+ *  name search) must use this rather than re-loading a tab they already have — the
+ *  whole camp shares one 60 reads/minute quota, so a duplicate read is a real cost. */
+async function loadRoleContext(telegramId: number) {
+  const [leaderSheet, respSheet, sheet] = await Promise.all([
     loadLeaders(),
     loadResponsible(),
     loadVisitors(),
   ]);
+  const visitor = findByTelegramId(sheet.visitors, telegramId);
+  const asLeader = findLeadersByTelegramId(leaderSheet.leaders, telegramId);
+  const asResponsible = findResponsibleByTelegramId(respSheet.responsible, telegramId);
   return {
-    isVisitor: !!findByTelegramId(visitors, telegramId),
-    isLeader: findLeadersByTelegramId(leaders, telegramId).length > 0,
-    isResponsible: findResponsibleByTelegramId(responsible, telegramId).length > 0,
+    sheet,
+    leaders: leaderSheet.leaders,
+    responsible: respSheet.responsible,
+    visitor,
+    asLeader,
+    asResponsible,
+    roles: {
+      isVisitor: !!visitor,
+      isLeader: asLeader.length > 0,
+      isResponsible: asResponsible.length > 0,
+    },
   };
+}
+
+async function getUserRoles(
+  telegramId: number,
+): Promise<{ isVisitor: boolean; isLeader: boolean; isResponsible: boolean }> {
+  return (await loadRoleContext(telegramId)).roles;
 }
 
 function keyboardFromRoles(roles: {
@@ -115,9 +135,9 @@ bot.command("start", async (ctx) => {
     return ctx.reply(M.phishCaught);
   }
 
-  const { visitors } = await loadVisitors();
-  const me = findByTelegramId(visitors, ctx.from!.id);
-  const kb = await keyboardForUser(ctx.from!.id);
+  // One batched read covers both "is this person already linked?" and their keyboard.
+  const { visitor: me, roles } = await loadRoleContext(ctx.from!.id);
+  const kb = keyboardFromRoles(roles);
   if (me) return ctx.reply(M.alreadyLinked(me.name), kb ? { reply_markup: kb } : {});
   // A leader/responsible who never checked in as a visitor still gets their keyboard —
   // /start is the one command everyone knows, so it must repair a missing one.
@@ -127,12 +147,12 @@ bot.command("start", async (ctx) => {
 
 /** Admin scanned a participant's personal QR -> mark the medical exam and push the next step. */
 async function handleDoctorScan(ctx: Context, targetId: number) {
-  const { admins } = await loadAdmins();
+  // Both tabs in one batched read — the doctor scans on the same quota as the queue.
+  const [{ admins }, sheet] = await Promise.all([loadAdmins(), loadVisitors()]);
   if (!isSuperAdmin(ctx.from!.id) && !isAdmin(ctx.from!.id, admins)) {
     return ctx.reply(M.medNotAdmin);
   }
 
-  const sheet = await loadVisitors();
   const visitor = findByTelegramId(sheet.visitors, targetId);
   if (!visitor) return ctx.reply(M.medVisitorNotFound);
   if (visitor.doctorStatus) return ctx.reply(M.medAlreadyDone(visitor.name));
@@ -265,14 +285,25 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
  * Final registration message: team, leader names, room, then the role keyboard,
  * capabilities, and the team video. Both call sites run in the participant's own context.
  */
-async function sendFinalMessage(ctx: Context, visitor: { team: string; room: string }) {
-  const { leaders } = await loadLeaders();
+async function sendFinalMessage(
+  ctx: Context,
+  visitor: { team: string; room: string },
+  // Pass a context only when the caller already knows the roles are current. The
+  // check-in path must NOT: it reads the sheet before writing the Telegram ID, so a
+  // reused context would still say isVisitor=false and the keyboard would go missing.
+  preloaded?: Awaited<ReturnType<typeof loadRoleContext>>,
+) {
+  // Leaders, roles and the team video are fetched together so this whole message —
+  // the busiest moment of check-in — costs a single Sheets read request.
+  const [{ leaders, roles }, video] = await Promise.all([
+    preloaded ?? loadRoleContext(ctx.from!.id),
+    videoForTeam(visitor.team),
+  ]);
   const leaderNames = leaders
     .filter((l) => l.team === visitor.team)
     .map((l) => l.name)
     .join(", ");
 
-  const roles = await getUserRoles(ctx.from!.id);
   const kb = keyboardFromRoles(roles);
   await ctx.reply(
     M.registrationComplete({
@@ -285,7 +316,6 @@ async function sendFinalMessage(ctx: Context, visitor: { team: string; room: str
   await ctx.reply(roleCapabilitiesText(roles));
   await ctx.reply(M.infoChannel);
 
-  const video = await videoForTeam(visitor.team);
   if (video) {
     if (video.isVideoNote) {
       await ctx.replyWithVideoNote(video.fileId);
@@ -297,15 +327,17 @@ async function sendFinalMessage(ctx: Context, visitor: { team: string; room: str
 
 // Participant taps "Я пройшов(ла) Аню" -> send the final message once payment is marked.
 bot.callbackQuery("checkanya", async (ctx) => {
-  const { visitors } = await loadVisitors();
-  const me = findByTelegramId(visitors, ctx.from.id);
+  // Already linked by definition here, so the roles in this context stay valid for
+  // the final message — hand it over instead of reading the same three tabs again.
+  const context = await loadRoleContext(ctx.from.id);
+  const me = context.visitor;
   if (!me) return ctx.answerCallbackQuery(M.mustCheckInFirst);
   if (!me.doctorStatus || !me.paymentStatus) {
     return ctx.answerCallbackQuery({ text: M.anyaNotYet, show_alert: true });
   }
   await ctx.answerCallbackQuery();
   await ctx.deleteMessage();
-  await sendFinalMessage(ctx, me);
+  await sendFinalMessage(ctx, me, context);
 });
 
 // Role-linking (👑/🎨) buttons stay valid in Telegram forever, so someone scrolling up in
@@ -712,18 +744,21 @@ bot.command("syncresp", async (ctx) => {
   const lines: string[] = [M.mcSyncTitle, ""];
   let added = 0;
   let existing = 0;
-  for (const mc of mcs) {
-    for (const name of splitResponsibleNames(mc.responsible)) {
-      const result = await addResponsible(mc.id, name);
-      if (result === "ok") {
-        lines.push(M.mcSyncAdded(name, mc.title));
-        added++;
-      } else {
-        lines.push(M.mcSyncDuplicate(name, mc.title));
-        existing++;
-      }
+  // Flatten first: one read + one append for the whole catalog. Adding per name in a
+  // loop used to issue a read per name and could exhaust the quota on its own.
+  const entries = mcs.flatMap((mc) =>
+    splitResponsibleNames(mc.responsible).map((name) => ({ mcId: mc.id, name, title: mc.title })),
+  );
+  const results = await addResponsibleMany(entries);
+  entries.forEach((e, i) => {
+    if (results[i] === "ok") {
+      lines.push(M.mcSyncAdded(e.name, e.title));
+      added++;
+    } else {
+      lines.push(M.mcSyncDuplicate(e.name, e.title));
+      existing++;
     }
-  }
+  });
   lines.push("", M.mcSyncSummary(added, existing));
   return replyChunked(ctx, lines);
 });
@@ -1109,15 +1144,12 @@ bot.hears(BTN.mcNotify, async (ctx) =>
 // --- name search (must be after commands) ---
 
 bot.on("message:text", async (ctx) => {
-  const [sheet, leaderSheet, respSheet] = await Promise.all([
-    loadVisitors(),
-    loadLeaders(),
-    loadResponsible(),
-  ]);
-
-  const meVisitor = findByTelegramId(sheet.visitors, ctx.from.id);
-  const meLeader = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
-  const meResponsible = findResponsibleByTelegramId(respSheet.responsible, ctx.from.id);
+  const {
+    sheet,
+    visitor: meVisitor,
+    asLeader: meLeader,
+    asResponsible: meResponsible,
+  } = await loadRoleContext(ctx.from.id);
 
   // Only visitors are searched here — leader/responsible linking is command-gated behind
   // /leader and /responsible, so a typed name can never offer someone else's role.
