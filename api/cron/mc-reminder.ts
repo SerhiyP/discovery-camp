@@ -1,19 +1,16 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { InlineKeyboard } from "grammy";
 import { bot } from "../../src/bot";
-import { loadVisitors } from "../../src/checkin";
 import { M } from "../../src/messages";
+import { buildSlotButtons, hasActiveRegistrationForSlot, todaySlots, topicLines } from "../../src/masterclasses";
 import {
-  buildSlotButtons,
-  hasActiveRegistrationForSlot,
-  loadMasterclasses,
-  loadMCRegistrations,
-  loadMCSchedule,
-  loadMCTabRows,
-  loadMCTopics,
-  todaySlots,
-  topicLines,
-} from "../../src/masterclasses";
+  asMCRegistrations,
+  getMasterclasses,
+  getMCSchedule,
+  getMCTopics,
+  getRegistrations,
+} from "../../src/mc-store";
+import { getVisitorsMongo } from "../../src/visitor-store";
 
 // Reminds checked-in visitors who haven't registered for an upcoming masterclass
 // slot yet. Triggered by two Vercel Cron entries (see vercel.json), one per slot,
@@ -29,21 +26,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const before = String(req.query.before ?? "");
   if (!before) return res.status(400).json({ error: "missing 'before' query param" });
 
-  // 1. Fetch only the MCSchedule tab first (it holds both the schedule and the catalog)
-  const tabRows = await loadMCTabRows();
-  const schedule = await loadMCSchedule(tabRows);
+  // 1. Schedule comes from Mongo — no Sheets reads anywhere in this cron.
+  const schedule = await getMCSchedule();
 
   // 2. Check if we have any matching slots today. If not, exit immediately.
   const slots = todaySlots(schedule).filter((s) => s.slot.startsWith(before));
   if (slots.length === 0) return res.json({ sent: 0, reason: "no matching slot today" });
 
-  // 3. Only fetch the remaining data if there is actually a slot to process today
-  const [mcs, regs, { visitors }, topics] = await Promise.all([
-    loadMasterclasses(tabRows),
-    loadMCRegistrations(),
-    loadVisitors(),
-    loadMCTopics(tabRows),
+  // 3. Only fetch the rest if there is actually a slot to process.
+  const [mcs, regsRaw, visitors, topics] = await Promise.all([
+    getMasterclasses(),
+    getRegistrations(),
+    getVisitorsMongo(),
+    getMCTopics(),
   ]);
+  const regs = asMCRegistrations(regsRaw);
 
   let sent = 0;
   let total = 0;

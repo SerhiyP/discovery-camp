@@ -19,16 +19,10 @@ import {
   activeRegs,
   buildSlotButtons,
   loadMasterclasses,
-  loadMCRegistrations,
-  loadMCSchedule,
-  loadMCTabRows,
-  loadMCTopics,
   Masterclass,
-  register,
   splitResponsibleNames,
   todaySlots,
   topicLines,
-  unregister,
 } from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
 import { M, roleCapabilitiesText } from "./messages";
@@ -54,9 +48,23 @@ import {
   searchResponsibleByName,
 } from "./responsible";
 import { loadCatches, logCatch } from "./phishing";
-import { syncMCFromSheets } from "./mc-store";
+import {
+  asMCRegistrations,
+  getMasterclasses,
+  getMCSchedule,
+  getMCTopics,
+  getRegistrations,
+  registerMongo,
+  syncMCFromSheets,
+  unregisterMongo,
+} from "./mc-store";
 import { mongoEnabled } from "./mongo";
-import { syncVisitorsFromSheets, upsertVisitorMongo } from "./visitor-store";
+import {
+  findVisitorByTelegramIdMongo,
+  getVisitorsMongo,
+  syncVisitorsFromSheets,
+  upsertVisitorMongo,
+} from "./visitor-store";
 
 export const bot = new Bot(config.botToken);
 
@@ -286,6 +294,23 @@ function safeAnswer(
   return tryTelegram("answerCallbackQuery", () => ctx.answerCallbackQuery(...args));
 }
 
+/** Wraps a Mongo-backed handler. On failure it logs and answers with M.tryAgainLater
+ *  instead of throwing — there is no global bot.catch, so an uncaught error becomes
+ *  HTTP 500 and Telegram redelivers the same update in a loop. */
+function mongoGuarded<C extends Context>(
+  handler: (ctx: C) => Promise<unknown>,
+): (ctx: C) => Promise<void> {
+  return async (ctx) => {
+    try {
+      await handler(ctx);
+    } catch (err) {
+      console.error("mongo-backed handler failed", err);
+      if (ctx.callbackQuery) await safeAnswer(ctx as never, M.tryAgainLater);
+      await ctx.reply(M.tryAgainLater).catch(() => {});
+    }
+  };
+}
+
 /** The personal QR the doctor scans to mark the medical exam. Safe to send more than
  *  once, so it doubles as the recovery path for a check-in whose first attempt died. */
 async function sendMedQr(ctx: Context): Promise<unknown> {
@@ -492,10 +517,13 @@ bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
 // --- masterclasses ---
 
 async function handleMasterclasses(ctx: Context) {
-  const [tabRows, regs] = await Promise.all([loadMCTabRows(), loadMCRegistrations()]);
-  const mcs = await loadMasterclasses(tabRows);
-  const schedule = await loadMCSchedule(tabRows);
-  const topics = await loadMCTopics(tabRows);
+  const [mcs, schedule, topics, regsRaw] = await Promise.all([
+    getMasterclasses(),
+    getMCSchedule(),
+    getMCTopics(),
+    getRegistrations(),
+  ]);
+  const regs = asMCRegistrations(regsRaw);
   const slots = todaySlots(schedule);
   const kb = new InlineKeyboard();
   const topicsLines: string[] = [];
@@ -509,9 +537,7 @@ async function handleMasterclasses(ctx: Context) {
     anyListed = true;
   }
   if (!anyListed) return ctx.reply(M.noMasterclassesToday);
-  const body = topicsLines.length
-    ? [M.mcDayTitle, "", ...topicsLines].join("\n")
-    : M.mcDayTitle;
+  const body = topicsLines.length ? [M.mcDayTitle, "", ...topicsLines].join("\n") : M.mcDayTitle;
   return ctx.reply(body, { reply_markup: kb });
 }
 
@@ -530,15 +556,14 @@ async function handleSchedule(ctx: Context) {
 }
 
 async function handleMyRegs(ctx: Context) {
-  const tabRows = await loadMCTabRows();
-  const [mcs, regs, topics] = await Promise.all([
-    loadMasterclasses(tabRows),
-    loadMCRegistrations(),
-    loadMCTopics(tabRows),
+  const [mcs, topics, regs] = await Promise.all([
+    getMasterclasses(),
+    getMCTopics(),
+    getRegistrations(),
   ]);
   const today = todayISO();
   const mine = regs.filter(
-    (r) => r.telegramId === String(ctx.from!.id) && !r.cancelled && r.date >= today,
+    (r) => r.telegramId === String(ctx.from!.id) && r.active && r.date >= today,
   );
   if (mine.length === 0) return ctx.reply(M.myRegsEmpty);
   const lines = [M.myRegsTitle, ""];
@@ -552,27 +577,25 @@ async function handleMyRegs(ctx: Context) {
   return ctx.reply(lines.join("\n"));
 }
 
-bot.command("mc", handleMasterclasses);
+bot.command("mc", mongoGuarded(handleMasterclasses));
 bot.command("schedule", handleSchedule);
-bot.command("myevents", handleMyRegs);
+bot.command("myevents", mongoGuarded(handleMyRegs));
 
-bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, mongoGuarded(async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
   if (date !== todayISO()) return safeAnswer(ctx, M.noMasterclassesToday);
-  const tabRows = await loadMCTabRows();
-  const [mcs, topics, { visitors }] = await Promise.all([
-    loadMasterclasses(tabRows),
-    loadMCTopics(tabRows),
-    loadVisitors(),
+  const [mcs, topics, me] = await Promise.all([
+    getMasterclasses(),
+    getMCTopics(),
+    findVisitorByTelegramIdMongo(ctx.from.id),
   ]);
   const mc = mcs.find((m) => m.id === mcId);
-  const me = findByTelegramId(visitors, ctx.from.id);
   if (!mc) return safeAnswer(ctx);
   if (!me) {
     await safeAnswer(ctx);
     return ctx.reply(M.mustCheckInFirst);
   }
-  const result = await register(date, slot, mcId, mc.capacity, ctx.from.id, me.name);
+  const result = await registerMongo(date, slot, mcId, mc.capacity, ctx.from.id);
   await safeAnswer(
     ctx,
     result === "ok"
@@ -588,17 +611,17 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
     await ctx.reply(M.mcRegistered(mc.title, slot, mc.place, topic));
   }
   if (result === "slot_taken") await ctx.reply(M.mcSlotTaken);
-});
+}));
 
-bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
+bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, mongoGuarded(async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
   if (date !== todayISO()) return safeAnswer(ctx, M.noMasterclassesToday);
-  const mcs = await loadMasterclasses();
+  const mcs = await getMasterclasses();
   const mc = mcs.find((m) => m.id === mcId);
-  const ok = await unregister(date, slot, mcId, ctx.from.id);
+  const ok = await unregisterMongo(date, slot, mcId, ctx.from.id);
   await safeAnswer(ctx);
   if (ok && mc) await ctx.reply(M.mcUnregistered(mc.title, slot));
-});
+}));
 
 // Inert tap target for the slot-header row in the combined masterclass list.
 bot.callbackQuery("mcnoop", (ctx) => safeAnswer(ctx));
@@ -971,7 +994,7 @@ async function myLedTeams(telegramId: number): Promise<string[] | null> {
 async function handleTeamRoster(ctx: Context) {
   const teams = await myLedTeams(ctx.from!.id);
   if (!teams) return replyRoleRevoked(ctx, M.notLeader);
-  const { visitors } = await loadVisitors();
+  const visitors = await getVisitorsMongo();
   const lines: string[] = [];
   for (const team of teams) {
     const members = visitorsByTeam(visitors, team);
@@ -997,12 +1020,15 @@ async function handleTeamRoster(ctx: Context) {
 async function handleTeamMc(ctx: Context) {
   const teams = await myLedTeams(ctx.from!.id);
   if (!teams) return replyRoleRevoked(ctx, M.notLeader);
-  const tabRows = await loadMCTabRows();
-  const slots = todaySlots(await loadMCSchedule(tabRows));
+  const [schedule, mcs, regsRaw, visitors] = await Promise.all([
+    getMCSchedule(),
+    getMasterclasses(),
+    getRegistrations(),
+    getVisitorsMongo(),
+  ]);
+  const slots = todaySlots(schedule);
   if (slots.length === 0) return ctx.reply(M.noMasterclassesToday);
-  const mcs = await loadMasterclasses(tabRows);
-  const regs = await loadMCRegistrations();
-  const { visitors } = await loadVisitors();
+  const regs = asMCRegistrations(regsRaw);
 
   const lines: string[] = [];
   for (const team of teams) {
@@ -1051,9 +1077,7 @@ async function myOccurrencesToday(telegramId: number): Promise<MCOccurrence[] | 
   const mine = findResponsibleByTelegramId(responsible, telegramId);
   if (mine.length === 0) return null;
   const myIds = [...new Set(mine.map((r) => r.mcId))];
-  const tabRows = await loadMCTabRows();
-  const mcs = await loadMasterclasses(tabRows);
-  const schedule = await loadMCSchedule(tabRows);
+  const [mcs, schedule] = await Promise.all([getMasterclasses(), getMCSchedule()]);
   const occ: MCOccurrence[] = [];
   for (const s of todaySlots(schedule)) {
     for (const id of s.mcIds) {
@@ -1069,13 +1093,18 @@ async function handleMcAttendees(ctx: Context) {
   const occ = await myOccurrencesToday(ctx.from!.id);
   if (occ === null) return replyRoleRevoked(ctx, M.notResponsible);
   if (occ.length === 0) return ctx.reply(M.noMyMcToday);
-  const regs = await loadMCRegistrations();
+  const [regsRaw, visitors] = await Promise.all([getRegistrations(), getVisitorsMongo()]);
+  const regs = asMCRegistrations(regsRaw);
+  const nameById = new Map(
+    visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v.name]),
+  );
   const lines: string[] = [];
   for (const o of occ) {
     const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
     lines.push(M.mcAttendeesHeader(o.mc.title, o.slot, o.mc.place, taken.length, o.mc.capacity));
     if (taken.length === 0) lines.push(M.mcNoAttendees);
-    for (const r of taken) lines.push(`• ${r.name}`);
+    for (const r of taken)
+      lines.push(`• ${nameById.get(r.telegramId) ?? M.mcAttendeeUnknown(r.telegramId)}`);
     lines.push("");
   }
   return ctx.reply(lines.join("\n").trimEnd());
@@ -1102,7 +1131,7 @@ async function notifyOccurrence(
   text: string,
   entities?: MessageEntity[],
 ) {
-  const regs = await loadMCRegistrations();
+  const regs = asMCRegistrations(await getRegistrations());
   const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
   const ids = [...new Set(taken.map((r) => r.telegramId))];
   let sent = 0;
@@ -1117,7 +1146,7 @@ async function notifyOccurrence(
   return ctx.reply(M.mcNotifySent(sent, ids.length, o.mc.title, o.slot));
 }
 
-bot.command("notifymc", async (ctx) => {
+bot.command("notifymc", mongoGuarded(async (ctx) => {
   const text = ctx.match.trim();
   if (!text) return ctx.reply(M.mcNotifyNoText);
   const occ = await myOccurrencesToday(ctx.from!.id);
@@ -1134,9 +1163,9 @@ bot.command("notifymc", async (ctx) => {
   const kb = new InlineKeyboard();
   occ.forEach((o, i) => kb.text(`${o.mc.title} (${o.slot})`, `mn:${i}`).row());
   return ctx.reply(M.mcNotifyChoose(text), { reply_markup: kb });
-});
+}));
 
-bot.callbackQuery(/^mn:(\d+)$/, async (ctx) => {
+bot.callbackQuery(/^mn:(\d+)$/, mongoGuarded(async (ctx) => {
   const idx = Number(ctx.match[1]);
   // The notify text is embedded in the picker message («…»), like the renameteam flow.
   const msgText = ctx.callbackQuery.message?.text ?? "";
@@ -1154,10 +1183,18 @@ bot.callbackQuery(/^mn:(\d+)$/, async (ctx) => {
   await safeAnswer(ctx);
   await ctx.deleteMessage();
   return notifyOccurrence(ctx, o, textMatch[1]);
-});
+}));
 
 async function renderCaught(ctx: Context, o: MCOccurrence) {
-  const [regs, catches] = await Promise.all([loadMCRegistrations(), loadCatches()]);
+  const [regsRaw, catches, visitors] = await Promise.all([
+    getRegistrations(),
+    loadCatches(),
+    getVisitorsMongo(),
+  ]);
+  const regs = asMCRegistrations(regsRaw);
+  const nameById = new Map(
+    visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v.name]),
+  );
   const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
   const earliestByTelegramId = new Map<string, string>();
   for (const c of catches) {
@@ -1167,7 +1204,10 @@ async function renderCaught(ctx: Context, o: MCOccurrence) {
   }
   const caught = taken
     .filter((r) => earliestByTelegramId.has(r.telegramId))
-    .map((r) => ({ name: r.name, caughtAt: earliestByTelegramId.get(r.telegramId)! }))
+    .map((r) => ({
+      name: nameById.get(r.telegramId) ?? M.mcAttendeeUnknown(r.telegramId),
+      caughtAt: earliestByTelegramId.get(r.telegramId)!,
+    }))
     .sort((a, b) => a.caughtAt.localeCompare(b.caughtAt));
   const lines = [M.caughtHeader(o.mc.title, o.slot)];
   if (caught.length === 0) lines.push(M.noCatches);
@@ -1175,7 +1215,7 @@ async function renderCaught(ctx: Context, o: MCOccurrence) {
   return ctx.reply(lines.join("\n"));
 }
 
-bot.command("caught", async (ctx) => {
+bot.command("caught", mongoGuarded(async (ctx) => {
   const occ = await myOccurrencesToday(ctx.from!.id);
   if (occ === null) return ctx.reply(M.notResponsible);
   if (occ.length === 0) return ctx.reply(M.noMyMcToday);
@@ -1183,9 +1223,9 @@ bot.command("caught", async (ctx) => {
   const kb = new InlineKeyboard();
   occ.forEach((o, i) => kb.text(`${o.mc.title} (${o.slot})`, `cn:${i}`).row());
   return ctx.reply(M.caughtChoose, { reply_markup: kb });
-});
+}));
 
-bot.callbackQuery(/^cn:(\d+)$/, async (ctx) => {
+bot.callbackQuery(/^cn:(\d+)$/, mongoGuarded(async (ctx) => {
   const idx = Number(ctx.match[1]);
   const occ = await myOccurrencesToday(ctx.from.id);
   const o = occ?.[idx];
@@ -1193,15 +1233,15 @@ bot.callbackQuery(/^cn:(\d+)$/, async (ctx) => {
   if (!o) return ctx.editMessageText(M.noMyMcToday);
   await ctx.deleteMessage();
   return renderCaught(ctx, o);
-});
+}));
 
 // --- keyboard button handlers (must be before message:text catch-all) ---
 
-bot.hears(BTN.masterclasses, handleMasterclasses);
+bot.hears(BTN.masterclasses, mongoGuarded(handleMasterclasses));
 bot.hears(BTN.schedule, handleSchedule);
-bot.hears(BTN.myRegs, handleMyRegs);
-bot.hears(BTN.teamRoster, handleTeamRoster);
-bot.hears(BTN.teamMc, handleTeamMc);
+bot.hears(BTN.myRegs, mongoGuarded(handleMyRegs));
+bot.hears(BTN.teamRoster, mongoGuarded(handleTeamRoster));
+bot.hears(BTN.teamMc, mongoGuarded(handleTeamMc));
 // The hint-only buttons still check the role, so a revoked leader/responsible gets
 // their keyboard refreshed instead of a hint for a command they can no longer run.
 bot.hears(BTN.notifyTeam, async (ctx) =>
@@ -1214,7 +1254,7 @@ bot.hears(BTN.renameTeam, async (ctx) =>
     ? ctx.reply(M.renameTeamHint)
     : replyRoleRevoked(ctx, M.notLeader),
 );
-bot.hears(BTN.mcAttendees, handleMcAttendees);
+bot.hears(BTN.mcAttendees, mongoGuarded(handleMcAttendees));
 bot.hears(BTN.mcNotify, async (ctx) =>
   (await getUserRoles(ctx.from!.id)).isResponsible
     ? ctx.reply(M.mcNotifyHint)

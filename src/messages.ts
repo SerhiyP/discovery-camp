@@ -177,6 +177,7 @@ export const M = {
     `Каталог МК оновлено ✅\nМайстер-класів: ${mcs}, слотів: ${slots}, тем: ${topics}.`,
   visitorsSynced: (count: number) => `Учасників синхронізовано ✅\nЗаписів: ${count}.`,
   syncFailed: "Не вдалося синхронізувати. Спробуйте ще раз за хвилину.",
+  tryAgainLater: "Тимчасова помилка. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",
   confirmDelResp: (name: string, title: string) => `Видалити ${name} з «${title}»?`,
@@ -219,6 +220,7 @@ export const M = {
   mcAttendeesHeader: (title: string, slot: string, place: string, taken: number, capacity: number) =>
     `🎨 ${title} — ${slot}, ${place} (${taken}${capacity > 0 ? `/${capacity}` : ""}):`,
   mcNoAttendees: "— поки нікого",
+  mcAttendeeUnknown: (id: string) => `невідомий учасник (ID ${id})`,
   mcNotifyNoText: "Використання: /notifymc <текст повідомлення>",
   mcNotifyHint: "Напишіть команду з текстом:\n/notifymc <ваше повідомлення>",
   mcNotifyChoose: (text: string) =>
