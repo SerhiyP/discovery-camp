@@ -8,6 +8,7 @@ import {
   renameTeamVideo,
   searchByName,
   updateTeamVideo,
+  Visitor,
   videoForTeam,
   visitorsByTeam,
 } from "./checkin";
@@ -50,6 +51,7 @@ import {
   getMCSchedule,
   getMCTopics,
   getRegistrations,
+  MongoRegistration,
   registerMongo,
   syncCampSchedule,
   syncMCFromSheets,
@@ -842,6 +844,38 @@ async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promis
   if (buf.length > 0) await ctx.reply(buf.join("\n"));
 }
 
+function formatStats(visitors: Visitor[], regs: MongoRegistration[]): string[] {
+  const total = visitors.length;
+  const checkedIn = visitors.filter((v) => v.checkedIn !== "").length;
+  const pct = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
+
+  const active = regs.filter((r) => r.active);
+  const byDate = new Map<string, Map<string, number>>();
+  for (const r of active) {
+    if (!byDate.has(r.date)) byDate.set(r.date, new Map());
+    const slots = byDate.get(r.date)!;
+    slots.set(r.slot, (slots.get(r.slot) ?? 0) + 1);
+  }
+  const dates = [...byDate.keys()].sort();
+
+  const lines = [
+    M.statsTitle,
+    "",
+    M.statsVisitors(total),
+    M.statsCheckedIn(checkedIn, pct),
+    "",
+    M.statsRegsTitle,
+  ];
+  for (const date of dates) {
+    lines.push(date);
+    for (const [slot, count] of byDate.get(date)!) {
+      lines.push(M.statsSlotLine(slot, count));
+    }
+  }
+  lines.push("", M.statsRegsTotal(active.length));
+  return lines;
+}
+
 bot.command("syncresp", async (ctx) => {
   const { admins } = await loadAdmins();
   if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
@@ -901,6 +935,18 @@ bot.command("syncschedule", async (ctx) => {
   } catch (err) {
     console.error("syncschedule failed", err);
     return ctx.reply(M.syncFailed);
+  }
+});
+
+bot.command("stats", async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+  try {
+    const [visitors, regs] = await Promise.all([getVisitorsMongo(), getRegistrations()]);
+    return replyChunked(ctx, formatStats(visitors, regs));
+  } catch (err) {
+    console.error("stats failed", err);
+    return ctx.reply(M.statsFailed);
   }
 });
 
