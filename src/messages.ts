@@ -171,6 +171,8 @@ export const M = {
   mcSyncDuplicate: (name: string, title: string) => `⚪ ${name} — ${title} (вже є)`,
   mcSyncSummary: (added: number, existing: number) =>
     `Додано: ${added}, вже було: ${existing}.`,
+  menusSynced: (admins: number, leaders: number) =>
+    `Меню команд оновлено ✅\nАдміністраторів: ${admins}, лідерів: ${leaders}.`,
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",
   confirmDelResp: (name: string, title: string) => `Видалити ${name} з «${title}»?`,
