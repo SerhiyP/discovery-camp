@@ -31,21 +31,21 @@ export const M = {
     "Цей учасник уже відмітився з іншого акаунта. Якщо це помилка — зверніться до організаторів.",
   checkedIn: (name: string, room?: string) =>
     `Готово, ${name}! Ви відмічені ✅${room ? `\nВаша кімната: ${room}` : ""}\nГарного табору! 🎉`,
-  // Shown in /help so a participant can self-check they're linked to the right row —
-  // catches a mis-link at a glance instead of only surfacing at check-in time.
-  helpYourInfo: (opts: { name: string; team?: string; room?: string }) => {
-    const lines = [`👤 Ви: ${opts.name}`];
+  // Shown in /help so a person can self-check they're linked to the right row(s) —
+  // catches a mis-link at a glance instead of only surfacing later. A person can hold
+  // several roles at once (e.g. admin + leader), so all applicable roleTags are listed
+  // together on the same line rather than picking just one.
+  helpYourInfo: (opts: { name?: string; team?: string; room?: string; roleTags?: string[] }) => {
+    const tags = opts.roleTags && opts.roleTags.length > 0 ? ` — ${opts.roleTags.join(", ")}` : "";
+    const lines: string[] = [];
+    if (opts.name || tags) lines.push(opts.name ? `👤 Ви: ${opts.name}${tags}` : `👤 Ви:${tags}`);
     if (opts.team) lines.push(`Група: ${opts.team}`);
     if (opts.room) lines.push(`Кімната: ${opts.room}`);
-    return lines.join("\n");
+    return lines.length > 0 ? lines.join("\n") : undefined;
   },
-  // Fallback identity lines for /help when the person isn't (also) a checked-in
-  // visitor — otherwise a leader/responsible/admin-only account saw no "who am I"
-  // confirmation at all.
-  helpYourInfoLeader: (name: string, team: string) => `👤 Ви: ${name} — лідер команди «${team}»`,
-  helpYourInfoResponsible: (name: string) => `👤 Ви: ${name} — відповідальний за майстер-клас`,
-  helpYourInfoAdmin: (name?: string) =>
-    name ? `👤 Ви: ${name} — адміністратор` : `👤 Ви: адміністратор`,
+  roleTagLeader: (team: string) => `лідер команди «${team}»`,
+  roleTagResponsible: "відповідальний за майстер-клас",
+  roleTagAdmin: "адміністратор",
   videoCaption: "Відеопривітання від вашого лідера команди 🎬",
 
   // --- staged check-in: doctor QR -> Аня -> final message ---

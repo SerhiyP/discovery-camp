@@ -211,21 +211,16 @@ bot.command("help", mongoGuarded(async (ctx) => {
   // Roles are already loaded here, so send the matching keyboard along — this is how
   // someone whose role was added straight in the sheet picks up their buttons.
   const kb = keyboardFromRoles(roles);
-  // Visitor info is shown first so a mis-linked row (wrong name/team) is caught by the
-  // person reading it, not just by whoever notices the sheet later. A leader/responsible/
-  // admin who never also checked in as a visitor still gets an identity line rather than
-  // silently seeing none.
-  const infoLine = visitor
-    ? M.helpYourInfo({ name: visitor.name, team: visitor.team, room: visitor.room })
-    : asLeader.length > 0
-    ? M.helpYourInfoLeader(asLeader[0].name, asLeader[0].team)
-    : asResponsible.length > 0
-    ? M.helpYourInfoResponsible(asResponsible[0].name)
-    : admin
-    ? M.helpYourInfoAdmin(admin.name)
-    : superadmin
-    ? M.helpYourInfoAdmin()
-    : undefined;
+  // A person can hold several roles at once (e.g. admin + leader) — list all of them
+  // rather than picking just one, so the info line is never missing a role they have.
+  // Visitor name/team/room take priority for the base identity since that row is the
+  // one most likely to catch a mis-link; the other roles just fall in as tags.
+  const roleTags: string[] = [];
+  if (asLeader.length > 0) roleTags.push(M.roleTagLeader(asLeader[0].team));
+  if (asResponsible.length > 0) roleTags.push(M.roleTagResponsible);
+  if (admin || superadmin) roleTags.push(M.roleTagAdmin);
+  const name = visitor?.name ?? asLeader[0]?.name ?? asResponsible[0]?.name ?? admin?.name;
+  const infoLine = M.helpYourInfo({ name, team: visitor?.team, room: visitor?.room, roleTags });
   return ctx.reply(
     [infoLine, roleCapabilitiesText(roles), M.infoChannel].filter(Boolean).join("\n\n"),
     kb ? { reply_markup: kb } : {},
