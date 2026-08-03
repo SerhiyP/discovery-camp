@@ -18,13 +18,21 @@ CLAUDE.md currently documents this as accepted.
 
 - Masterclass registration costs **zero** Sheets read requests.
 - Capacity and one-registration-per-slot become database guarantees, not races.
-- Check-in finds participants without reading Sheets on the common path.
+- The common path — `/start`, `/help`, any typed message, check-in name search — costs
+  **zero** Sheets read requests.
 - Admins can re-sync from Sheets on demand when they edit a tab.
+
+Reaching zero on the common path requires moving `Leaders`, `MCResponsible`, `Admins` and
+`Videos` as well, not just `Visitors`. `loadRoleContext` batches all three role tabs into
+one request; since quota counts requests rather than ranges, leaving any of them in Sheets
+means the request still happens and moving the others saves nothing.
 
 ## Non-goals
 
-- Moving `Leaders`, `Admins`, `MCResponsible` or `Videos`. They are small, bot-managed,
-  and already cost one batched request. Moving them buys nothing.
+- The badge-grid schedule (`config.gridSheetId`, tab `3.Розклад табору 2026`, read by
+  `schedule.ts`). It is a separate, human-maintained, read-only spreadsheet behind a
+  button pressed occasionally. It still costs one read against the same per-user quota,
+  and is left alone deliberately.
 - Removing Sheets. It stays the human-facing surface and the source of truth for
   everything humans and Google Forms write.
 - A Sheets fallback path for registration when Mongo is unavailable. See
@@ -38,7 +46,8 @@ CLAUDE.md currently documents this as accepted.
 | **Registrations** | **Mongo, only copy** | `EventRegs` is retired; nothing writes it |
 | Visitors | Sheets (Forms + Аня + staff) | cache; a miss falls back to a Sheets read |
 | Payment + doctor gate | Sheets | **never cached** — read live |
-| Leaders, Admins, MCResponsible, Videos | Sheets | unchanged |
+| Leaders, MCResponsible, Admins, Videos | Sheets | cache; refreshed by `/syncroles` and written through on every bot write |
+| Badge-grid schedule | Sheets (`gridSheetId`) | not cached — out of scope |
 
 The Visitors row is the important one. The bot never writes `Статус оплати`; Аня marks it
 by hand, and new participants arrive from a Google Form. Mongo therefore cannot own that
@@ -52,6 +61,10 @@ mcSchedule      { _id: "<date>|<slot>", date, slot, mcIds: [] }
 mcTopics        { _id: "<date>|<mcId>", date, mcId, topic }
 visitors        { _id: rowIndex, name, nameNorm: [], age, room, team,
                   specialNeeds, telegramId, checkedIn }
+leaders         { _id: rowIndex, team, name, telegramId }
+responsible     { _id: rowIndex, mcId, name, telegramId }
+admins          { _id: rowIndex, telegramId, name }
+videos          { _id: videoId, team, fileId, type }
 registrations   { date, slot, mcId, telegramId, registeredAt,
                   active: true, cancelledAt }
 ```
@@ -66,6 +79,11 @@ Indexes:
   for re-registration while keeping `cancelledAt` for the record.
 - `registrations`: `(date, slot, mcId)` for capacity counts.
 - `visitors`: `telegramId`, and `nameNorm` for prefix search.
+- `leaders`, `responsible`, `admins`: `telegramId`.
+
+The role collections mirror their tabs and are keyed by row index for the same reason as
+`visitors` — the existing `updateCell` write paths address rows by index. They follow the
+same replace-not-upsert rule on sync.
 
 `visitors._id` is the sheet row index, which is what the existing `updateCell` write path
 needs. Row indices are stable while Google Forms appends at the bottom, but a staff
@@ -100,10 +118,28 @@ Zero Sheets reads:
 The participant's name is not needed here. `registrations` stores `telegramId`; names are
 resolved from the visitor cache when rendering attendee lists.
 
+### Role lookup
+
+`loadRoleContext` — which backs `/start`, `/help`, every typed message and the check-in
+flow — reads `visitors`, `leaders` and `responsible` from Mongo. Zero Sheets reads.
+
+Sheets stays the source of truth for these tabs: admins edit them by hand, and the bot's
+own writes (`/addleader`, `/addadmin`, `/addresp`, `/delresp`, role linking) continue to
+write to Sheets and **write through** to Mongo in the same operation, so a role granted
+via the bot takes effect immediately.
+
+The gap is a role typed directly into a sheet, bypassing the bot. Today that takes effect
+as soon as the person presses `/start`; with this change it takes effect after an admin
+runs `/syncroles`. CLAUDE.md currently documents "tell the leader to press `/start`" as the
+supported way to hand out newly added buttons, and needs updating to say `/syncroles`
+first.
+
 ### Admin commands
 
 - `/syncmc` — re-read `MCSchedule`, replace catalog, schedule and topics. Reports counts.
 - `/syncvisitors` — refresh the visitor cache from the Visitors tab.
+- `/syncroles` — refresh `leaders`, `responsible`, `admins` and `videos` from their tabs.
+  Needed after editing a role tab by hand.
 There is no registration export. Registrations live in Mongo and stay there.
 
 All three are admin-gated and typed-only, following the `/syncresp` precedent.
@@ -136,17 +172,24 @@ Following the pattern established by the quota work — stubbed drivers, no live
 - Name-search miss falls back to Sheets and populates the cache.
 - The payment gate reads Sheets even when the visitor is cached.
 - Cancelling frees the slot: re-registering for the same slot after a cancel succeeds.
+- A role granted through the bot is effective immediately (write-through), without a sync.
+- `/start` for a checked-in visitor issues no Sheets request at all — the measurable
+  restatement of the "zero on the common path" goal, in the style of the existing
+  `checkin-reads` suite.
 - The three existing suites (`batch`, `checkin-reads`, `qr-recovery`) stay green.
 
 ## Rollout
 
 The camp is live, so ordering matters:
 
-1. Ship sync + `/syncmc` + `/syncvisitors` first, reading from Mongo nowhere yet. Verifies
-   the connection and the data shape with zero behaviour change.
+1. Ship sync + `/syncmc` + `/syncvisitors` + `/syncroles` first, reading from Mongo nowhere
+   yet. Verifies the connection and the data shape with zero behaviour change.
 2. Switch masterclass registration to Mongo. There are no existing registrations, so there
    is nothing to migrate and no dual-read period.
 3. Switch check-in name search to Mongo with the Sheets fallback.
+4. Switch `loadRoleContext` to Mongo and add write-through on the role write paths. Last
+   because it is the change that touches every command, and because until it lands the
+   earlier steps have not yet reduced `/start` to zero.
 
 Each step is independently revertible.
 
