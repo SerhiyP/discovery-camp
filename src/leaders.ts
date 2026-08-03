@@ -92,5 +92,3 @@ export async function removeLeader(team: string, name: string): Promise<boolean>
   await clearRow(config.leadersTab, leader.rowIndex);
   return true;
 }
-
-/** Updates Team column in Leaders tab for all rows matching oldName. Returns count updated. */

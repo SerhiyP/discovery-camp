@@ -228,7 +228,6 @@ export async function updateTeamVideo(
   return false;
 }
 
-/** Bulk-updates the team column in the responses sheet for all visitors on oldName. Returns count updated. */
 /** Updates the Team display name in the Videos tab when a team is renamed; matched and keyed by ID. */
 export async function renameTeamVideo(teamId: string, newName: string): Promise<void> {
   const rows = await getRows(config.videosTab);
