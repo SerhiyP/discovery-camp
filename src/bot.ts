@@ -270,6 +270,19 @@ async function tryTelegram(what: string, fn: () => Promise<unknown>): Promise<vo
   }
 }
 
+/** answerCallbackQuery only dismisses the client's loading spinner and optionally shows
+ *  a toast. Telegram invalidates the query about 15 seconds after the tap, so under load
+ *  it fails routinely with "query is too old" — and it must never abort a handler that
+ *  has already written to a sheet, which is how check-ins ended up recorded with the QR
+ *  never sent. Every callback handler answers through here; anything the participant
+ *  actually needs to read is sent as a normal message, not as a toast. */
+function safeAnswer(
+  ctx: Context,
+  ...args: Parameters<Context["answerCallbackQuery"]>
+): Promise<void> {
+  return tryTelegram("answerCallbackQuery", () => ctx.answerCallbackQuery(...args));
+}
+
 /** The personal QR the doctor scans to mark the medical exam. Safe to send more than
  *  once, so it doubles as the recovery path for a check-in whose first attempt died. */
 async function sendMedQr(ctx: Context): Promise<unknown> {
@@ -283,7 +296,7 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
   // Answer before touching the sheet. Telegram invalidates a callback query about 15
   // seconds after the tap, and the reads below can outlast that under load — answering
   // afterwards used to throw ("query is too old") once the row had already been written.
-  await tryTelegram("answerCallbackQuery", () => ctx.answerCallbackQuery());
+  await safeAnswer(ctx);
 
   const rowIndex = Number(ctx.match[1]);
   const sheet = await loadVisitors();
@@ -362,11 +375,11 @@ bot.callbackQuery("checkanya", async (ctx) => {
   // the final message — hand it over instead of reading the same three tabs again.
   const context = await loadRoleContext(ctx.from.id);
   const me = context.visitor;
-  if (!me) return ctx.answerCallbackQuery(M.mustCheckInFirst);
+  if (!me) return safeAnswer(ctx, M.mustCheckInFirst);
   if (!me.doctorStatus || !me.paymentStatus) {
-    return ctx.answerCallbackQuery({ text: M.anyaNotYet, show_alert: true });
+    return safeAnswer(ctx, { text: M.anyaNotYet, show_alert: true });
   }
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   await ctx.deleteMessage();
   await sendFinalMessage(ctx, me, context);
 });
@@ -384,7 +397,7 @@ function isStaleRoleLinkTap(ctx: Context): boolean {
 
 bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
   if (isStaleRoleLinkTap(ctx)) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.leaderPrompt);
   }
 
@@ -393,22 +406,22 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
 
   const alreadyLinked = findLeadersByTelegramId(leaderSheet.leaders, ctx.from.id);
   if (alreadyLinked.length > 0) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.leaderAlreadyLinked(alreadyLinked[0].name, alreadyLinked[0].team));
   }
 
   const leader = leaderSheet.leaders.find((l) => l.rowIndex === rowIndex);
   if (!leader) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.leaderNotFound);
   }
   if (leader.telegramId && leader.telegramId !== String(ctx.from.id)) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.rowTaken);
   }
 
   await setLeaderTelegramId(leaderSheet, rowIndex, ctx.from.id);
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   await ctx.deleteMessage();
 
   const { admins } = await loadAdmins();
@@ -426,7 +439,7 @@ bot.callbackQuery(/^link_leader:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
   if (isStaleRoleLinkTap(ctx)) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.respPrompt);
   }
 
@@ -435,23 +448,23 @@ bot.callbackQuery(/^link_resp:(\d+)$/, async (ctx) => {
 
   const already = findResponsibleByTelegramId(sheet.responsible, ctx.from.id);
   if (already.length > 0) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.respAlreadyLinked(already[0].name));
   }
 
   const row = sheet.responsible.find((r) => r.rowIndex === rowIndex);
   if (!row) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.respNotFound);
   }
   if (row.telegramId && row.telegramId !== String(ctx.from.id)) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.rowTaken);
   }
 
   // Links every unlinked row with this name — one person may run several MCs.
   const linked = await linkResponsibleRows(sheet, row.name, ctx.from.id);
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   await ctx.deleteMessage();
 
   const mcs = await loadMasterclasses();
@@ -533,7 +546,7 @@ bot.command("myevents", handleMyRegs);
 
 bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
-  if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
+  if (date !== todayISO()) return safeAnswer(ctx, M.noMasterclassesToday);
   const tabRows = await loadMCTabRows();
   const [mcs, topics, { visitors }] = await Promise.all([
     loadMasterclasses(tabRows),
@@ -542,13 +555,14 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   ]);
   const mc = mcs.find((m) => m.id === mcId);
   const me = findByTelegramId(visitors, ctx.from.id);
-  if (!mc) return ctx.answerCallbackQuery();
+  if (!mc) return safeAnswer(ctx);
   if (!me) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.reply(M.mustCheckInFirst);
   }
   const result = await register(date, slot, mcId, mc.capacity, ctx.from.id, me.name);
-  await ctx.answerCallbackQuery(
+  await safeAnswer(
+    ctx,
     result === "ok"
       ? M.mcRegistered(mc.title, slot, mc.place)
       : result === "full"
@@ -566,16 +580,16 @@ bot.callbackQuery(/^mcreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
 
 bot.callbackQuery(/^mcunreg:(\d{4}-\d{2}-\d{2}):(.+):([^:]+)$/, async (ctx) => {
   const [, date, slot, mcId] = ctx.match;
-  if (date !== todayISO()) return ctx.answerCallbackQuery(M.noMasterclassesToday);
+  if (date !== todayISO()) return safeAnswer(ctx, M.noMasterclassesToday);
   const mcs = await loadMasterclasses();
   const mc = mcs.find((m) => m.id === mcId);
   const ok = await unregister(date, slot, mcId, ctx.from.id);
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   if (ok && mc) await ctx.reply(M.mcUnregistered(mc.title, slot));
 });
 
 // Inert tap target for the slot-header row in the combined masterclass list.
-bot.callbackQuery("mcnoop", (ctx) => ctx.answerCallbackQuery());
+bot.callbackQuery("mcnoop", (ctx) => safeAnswer(ctx));
 
 // --- admin helpers ---
 
@@ -722,7 +736,7 @@ bot.callbackQuery(/^delresp:(\d+)$/, async (ctx) => {
   const rowIndex = Number(ctx.match[1]);
   const { responsible } = await loadResponsible();
   const row = responsible.find((r) => r.rowIndex === rowIndex);
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   if (!row) return ctx.editMessageText(M.delRespGone);
   const mcs = await loadMasterclasses();
   const title = mcs.find((m) => m.id === row.mcId)?.title ?? `МК ${row.mcId}`;
@@ -736,7 +750,7 @@ bot.callbackQuery(/^delrespyes:(\d+)$/, async (ctx) => {
   const rowIndex = Number(ctx.match[1]);
   const { responsible } = await loadResponsible();
   const row = responsible.find((r) => r.rowIndex === rowIndex);
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   if (!row) return ctx.editMessageText(M.delRespGone);
   await removeResponsibleByRow(rowIndex);
   const mcs = await loadMasterclasses();
@@ -745,7 +759,7 @@ bot.callbackQuery(/^delrespyes:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery("delrespcancel", async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   const picker = await buildDelRespPicker();
   if (!picker) return ctx.editMessageText(M.noResponsiblePersons);
   return ctx.editMessageText(picker.text, { reply_markup: picker.kb });
@@ -887,7 +901,7 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
   const msgText = ctx.callbackQuery.message?.text ?? "";
   const newNameMatch = msgText.match(/«(.+)»/);
   if (!newNameMatch) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.renameTeamNoText);
   }
   const newName = newNameMatch[1];
@@ -896,10 +910,10 @@ bot.callbackQuery(/^rt:(\d+)$/, async (ctx) => {
   const myTeams = [...new Set(mine.map((l) => l.team))];
   const oldTeam = myTeams[idx];
   if (!oldTeam) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.notLeader);
   }
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   const [visitorsCount] = await Promise.all([
     renameVisitorTeams(oldTeam, newName),
     renameLeaderTeams(oldTeam, newName),
@@ -1093,16 +1107,16 @@ bot.callbackQuery(/^mn:(\d+)$/, async (ctx) => {
   const msgText = ctx.callbackQuery.message?.text ?? "";
   const textMatch = msgText.match(/«([\s\S]+)»/);
   if (!textMatch) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.mcNotifyNoText);
   }
   const occ = await myOccurrencesToday(ctx.from.id);
   const o = occ?.[idx];
   if (!o) {
-    await ctx.answerCallbackQuery();
+    await safeAnswer(ctx);
     return ctx.editMessageText(M.noMyMcToday);
   }
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   await ctx.deleteMessage();
   return notifyOccurrence(ctx, o, textMatch[1]);
 });
@@ -1140,7 +1154,7 @@ bot.callbackQuery(/^cn:(\d+)$/, async (ctx) => {
   const idx = Number(ctx.match[1]);
   const occ = await myOccurrencesToday(ctx.from.id);
   const o = occ?.[idx];
-  await ctx.answerCallbackQuery();
+  await safeAnswer(ctx);
   if (!o) return ctx.editMessageText(M.noMyMcToday);
   await ctx.deleteMessage();
   return renderCaught(ctx, o);
