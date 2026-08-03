@@ -1267,6 +1267,66 @@ Also drops the one-write-per-member Visitors loop."
 
 ---
 
+### Task 9: /broadcast must fit the lambda budget
+
+Added 2026-08-03 after a live incident: `/broadcast` to all linked visitors sends sequentially (one awaited `sendMessage` per user) inside `api/bot.ts`'s 10s `maxDuration`. At camp scale it cannot finish; Vercel kills the lambda before it returns 200, Telegram redelivers the same update, and every retry re-sends the entire broadcast — users received the same message every ~10 seconds until the webhook queue was dropped by hand. This is the same amplification class CLAUDE.md documents for `answerCallbackQuery`, but triggered by runtime rather than a throw.
+
+**Files:**
+- Modify: `vercel.json` — raise `api/bot.ts` `maxDuration` to 60 (the cron entry already uses 60, so the plan supports it)
+- Modify: `src/bot.ts` — `/broadcast` sends in parallel chunks
+
+- [ ] **Step 1: Raise the webhook budget**
+
+In `vercel.json`, change `api/bot.ts`'s `maxDuration` from 10 to 60. Memory stays 1024.
+
+- [ ] **Step 2: Chunk the broadcast**
+
+Rewrite the send loop in `/broadcast` (`src/bot.ts:672`) to the reminder cron's shape — chunks of 15 sent with `Promise.all`, 1s sleep between chunks (Telegram's ~30 msg/s limit), per-send try/catch preserved, final `Sent to X/Y` reply unchanged:
+
+```typescript
+  let sent = 0;
+  const CHUNK_SIZE = 15;
+  for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + CHUNK_SIZE);
+    await Promise.all(
+      chunk.map(async (id) => {
+        try {
+          await bot.api.sendMessage(id, text);
+          sent++;
+        } catch {
+          // user blocked the bot etc.
+        }
+      }),
+    );
+    if (i + CHUNK_SIZE < ids.length) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  return ctx.reply(`Sent to ${sent}/${ids.length}`);
+```
+
+At 15 msgs/chunk this is ~200 recipients in ≈14s — comfortably inside 60s. `/notifyteam` and `/notifymc` keep their sequential loops: team- and attendee-sized audiences fit the budget.
+
+- [ ] **Step 3: Typecheck**
+
+Run: `npm run typecheck`
+Expected: clean.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add vercel.json src/bot.ts
+git commit -m "fix(broadcast): chunked sends inside a 60s lambda budget
+
+/broadcast sent one awaited message per visitor inside a 10s maxDuration;
+at camp scale the lambda timed out before returning 200, Telegram
+redelivered the same update, and every retry re-sent the whole broadcast.
+Sends now go in parallel chunks of 15 (Telegram's rate limit) and the
+webhook budget matches the cron's 60s."
+```
+
+---
+
 ## Self-review notes
 
 **Spec coverage.** Rollout steps 1–2, the camp schedule, and a scoped slice of step 3 (visitors mirror for telegramId lookups) are covered. Spec sections deliberately **not** covered, as agreed: check-in name search from Mongo, `loadRoleContext`, role tabs, `/syncroles`, videos, `/syncvideo`, team rename and the `teams` collection. Payment and doctor gates read Sheets live, always.
