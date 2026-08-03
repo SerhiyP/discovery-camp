@@ -108,7 +108,18 @@
 
 > Каталог майстер-класів (назва, місце, ліміт місць) **не** зберігається в цій таблиці — бот читає його на льоту з окремої таблиці «Сітка табору» (`GRID_SHEET_ID`, вкладка `5.Майстер-класи 2026`), див. розділ нижче.
 
-### 3. Деплой на Vercel
+### 3. MongoDB
+
+Реєстрації на майстер-класи зберігаються в MongoDB. Таблиця `EventRegs` залишена для сумісності з минулими рядками, але більше не читається чи записується.
+
+Додайте змінні оточення:
+
+```
+MONGO_URI=mongodb+srv://...      # operational store; unset = Sheets only
+MONGO_DB=discovery_camp          # optional, defaults to discovery_camp
+```
+
+### 4. Деплой на Vercel
 
 1. На [vercel.com](https://vercel.com) → **Add New Project** → імпортуйте репозиторій з GitHub.
 2. У **Settings → Environment Variables** додайте всі змінні з `.env.example`.
@@ -121,7 +132,7 @@ cp .env.example .env   # заповніть VERCEL_URL та інші значе�
 npm run set-webhook
 ```
 
-### 4. QR-код для плаката
+### 5. QR-код для плаката
 
 ```bash
 npm run qr   # створює checkin-qr.png (потрібен BOT_USERNAME у .env)

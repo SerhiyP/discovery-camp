@@ -50,7 +50,8 @@ All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 
 - **`RESPONSES_TAB`** (default: `Form Responses 1`) — Google Form responses; bot adds `Checked in` and `Telegram ID` columns to the right. Also reads `Команда` (team ID), `Кімната` (room number) and `Особливі потреби` (allergies/medical notes) columns.
 - **`MCSchedule`** — one tab, two independent blocks side by side (fetched once via `loadMCTabRows` and parsed by both loaders). Left: schedule `Date | Slot | MC IDs` (date `YYYY-MM-DD`, slot shown verbatim, MC IDs comma-separated catalog `№` values). Keep `Slot` short (e.g. `12:00-13:00`) — it is embedded in button callback data (64-byte Telegram limit). Right: catalog `№ | Назва | Відповідальний | Місце проведення | Подарунки | Кількість учасників` (extra columns like `посилання на мапу` are ignored). The catalog header row is detected by `Місце проведення`; the title column falls back to `№`+1 because `E1:F1` are merged in the sheet (so `Назва` may be unreadable via the API). `№` like `1.` → ID `1`; capacity `без обмежень`/blank = unlimited; non-numeric-`№` rows are skipped.
-- **`EventRegs`** — `Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at` (bot-managed masterclass registrations; one active registration per user per date+slot).
+- **`EventRegs`** — retired. Registrations live in MongoDB (`registrations` collection);
+  this tab is no longer read or written. Left in place so pre-Mongo rows stay readable.
 - **`MCResponsible`** — `MC ID | Name | Telegram ID | Added at` (bot-managed via `/addresp` or bulk-imported via `/syncresp`, which reads the catalog's `Відповідальний` column and splits multi-name cells on "і"/"й"/"та"/comma; linked by the person running `/responsible <ПІБ>`, not by typing a name at check-in). Removed via `/delresp`'s button picker, not by typed name.
 - **`Videos`** — `ID | Team | File ID | Type` for per-team leader videos. `ID` is a permanent numeric key; `Team` is a display name that can be renamed. `Type` is `video_note` or `video`.
 - **`Admins`** — `Telegram ID | Name` (bot-managed via `/addadmin`).
@@ -80,8 +81,21 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
 
 ### Key design notes
 
-- **No database transactions**: concurrent registrations have a small race window — acceptable for camp scale.
 - **Nothing expensive runs at module scope** — `src/bot.ts` is imported afresh on every Vercel cold start, and a check-in rush spins up many lambdas at once, so any import-time work is paid concurrently by all of them while they should be serving webhooks. Command menus used to be rebuilt there (a Sheets read plus one Telegram call per admin and leader); they are Telegram-side persistent state, already updated incrementally on every role change, and are now reconciled by hand via `/syncmenus`.
+- **MongoDB is the operational store for masterclasses** (`src/mongo.ts`, `src/mc-store.ts`,
+  `src/visitor-store.ts`). The catalog, schedule and topics are imported from `MCSchedule`
+  by `/syncmc`; the visitors mirror from the Visitors tab by `/syncvisitors` (telegramId
+  lookups only — payment and doctor status are never mirrored, the doctor gate reads Sheets
+  live); the camp schedule from the badge grid by `/syncschedule`. Registrations live only
+  in Mongo, where a unique partial index on `(date, slot, telegramId)` over `active: true`
+  makes one-registration-per-slot a database guarantee, and capacity is an atomic
+  per-(date, slot, mcId) seat counter (`mcSeats`) taken with a guarded `$inc` — the
+  read-count-append race the sheet version had is gone. `/syncmc` rebuilds the counters
+  from active registrations. Check-in write-throughs to the mirror are best-effort. The
+  Mongo client is created once per lambda and never at module scope. Every Mongo-backed
+  handler goes through `mongoGuarded` (`src/bot.ts`) so an outage replies «спробуйте за
+  хвилину» instead of a 500 that Telegram redelivers. `MONGO_URI` unset means Mongo is not
+  configured; `/syncmc` will fail loudly.
 - **`answerCallbackQuery` must never abort a handler** — Telegram invalidates a callback query ~15s after the tap, so it fails routinely under load. Handlers that write to a sheet and then answer would leave the write committed, throw, return HTTP 500 and get redelivered onto a different branch (this is how check-ins were recorded with the QR never sent). All callback handlers answer through `safeAnswer()` (`bot.ts`), which logs instead of throwing, and the toast is never the only way a participant learns the outcome — send a real message too.
 - **Sheets reads are quota-bound and auto-batched** — Google allows 60 read *requests* per minute per user, and the service account is one "user" shared by the whole camp. `sheets.ts` collects every `getRows()` issued in the same tick into one `values.batchGet` (one request regardless of range count) and retries a 429 twice with backoff. Nothing is cached, so data is always fresh. The practical rule for handlers: **fetch tabs concurrently, never sequentially** — `await Promise.all([loadA(), loadB()])` costs one request, whereas `await loadA(); await loadB();` costs two. `loadRoleContext()` in `bot.ts` is the shared entry point for "who is this person" (visitor row + leader rows + responsible rows in one request); use it instead of re-loading a tab a handler already has. Bulk operations must never read or write inside a loop — see `addResponsibleMany` (`responsible.ts`), which replaced a per-name read+append in `/syncresp` that exhausted the quota on its own.
 - **Row indices are 0-based** (including header row) in `sheets.ts`; cell addresses add 1 when building A1 notation.

@@ -48,6 +48,7 @@ import {
 import { loadCatches, logCatch } from "./phishing";
 import {
   asMCRegistrations,
+  ensureIndexes,
   getMasterclasses,
   getMCSchedule,
   getMCTopics,
@@ -846,6 +847,7 @@ bot.command("syncmc", async (ctx) => {
   const { admins } = await loadAdmins();
   if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
   try {
+    await ensureIndexes();
     const counts = await syncMCFromSheets();
     return ctx.reply(M.mcSynced(counts.masterclasses, counts.slots, counts.topics));
   } catch (err) {
