@@ -250,10 +250,24 @@ The camp is live, so ordering matters:
 5. `/syncvideo` to import the `Videos` tab, then switch video lookup and leader video
    updates to Mongo. Populate `teams` and switch rename to Mongo in the same step.
 
-All quota fixes to date are deployed and production is current. Check-in and masterclass
-registration are largely done for this camp, so read pressure is low: this work is for
-robustness and for next year, not an emergency. Each step can land and be observed on its
-own.
+### Priority
+
+All quota fixes to date are deployed and production is current. Check-in is essentially
+complete for this camp — almost everyone is registered — so steps 3, 4 and 5 serve a path
+that is already behind us. They are robustness work for next year.
+
+**Steps 1 and 2 are time-boxed.** The `mc-reminder` cron fires daily at 13:00 Kyiv
+(`0 10 * * *` UTC) and pushes 60–100 people into `mcreg` at once, at three reads per tap.
+That is the next and last high-pressure moment of this camp, and it repeats every day
+until 2026-08-07.
+
+Steps 1–2 are sufficient on their own: registration needs no visitor lookup, because
+`registrations` stores `telegramId` and names are resolved only when an attendee list is
+rendered. With the catalog and registrations in Mongo, the whole masterclass path —
+listing, registering, cancelling, `📋 Мої реєстрації` — costs zero Sheets reads without
+any of steps 3–5.
+
+Ship 1–2 before the next reminder. Treat 3–5 as post-camp.
 
 Each step is independently revertible.
 
