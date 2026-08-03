@@ -1,8 +1,15 @@
 import { Visitor, loadVisitors } from "./checkin";
 import { COLLECTIONS, db } from "./mongo";
+import { nowStamp } from "./config";
 
-// Mirror of the Visitors tab for telegramId lookups only. Payment and doctor status
-// are deliberately NOT mirrored — the doctor gate must always read Sheets live.
+// Mirror of the Visitors tab for telegramId lookups. Both doctorStatus and
+// paymentStatus are mirrored (2026-08-03 incident: check-in linking moved onto Mongo
+// — see linkAndCheckInMongo — so the gate needs both fields wherever the read
+// happens). paymentStatus is part of the stable IMPORTRANGE'd block (moves correctly
+// with the name), so it's trustworthy as synced. doctorStatus is written by
+// handleDoctorScan via a Telegram-ID lookup — same mechanism that was corrupted by
+// the row-shift incident — so historical values carry some residual risk; accepted
+// knowingly for speed on 2026-08-03.
 interface VisitorDoc {
   _id: number; // sheet rowIndex, 0-based incl. header — what updateCell addresses
   name: string;
@@ -12,6 +19,8 @@ interface VisitorDoc {
   specialNeeds: string;
   telegramId: string;
   checkedIn: string;
+  doctorStatus: string;
+  paymentStatus: string;
 }
 
 function toVisitor(d: Partial<VisitorDoc>): Visitor {
@@ -19,8 +28,8 @@ function toVisitor(d: Partial<VisitorDoc>): Visitor {
     rowIndex: Number(d._id ?? -1),
     name: String(d.name ?? ""),
     age: String(d.age ?? ""),
-    paymentStatus: "",
-    doctorStatus: "",
+    paymentStatus: String(d.paymentStatus ?? ""),
+    doctorStatus: String(d.doctorStatus ?? ""),
     team: String(d.team ?? ""),
     room: String(d.room ?? ""),
     specialNeeds: String(d.specialNeeds ?? ""),
@@ -42,6 +51,8 @@ export async function syncVisitorsFromSheets(): Promise<number> {
     specialNeeds: v.specialNeeds,
     telegramId: v.telegramId,
     checkedIn: v.checkedIn,
+    doctorStatus: v.doctorStatus,
+    paymentStatus: v.paymentStatus,
   }));
   const col = (await db()).collection(COLLECTIONS.visitors);
   await col.deleteMany({});
@@ -83,8 +94,46 @@ export async function upsertVisitorMongo(v: Visitor): Promise<void> {
         specialNeeds: v.specialNeeds,
         telegramId: v.telegramId,
         checkedIn: v.checkedIn,
+        doctorStatus: v.doctorStatus,
+        paymentStatus: v.paymentStatus,
       },
     },
     { upsert: true },
   );
+}
+
+/** Marks the doctor exam done directly in the mirror — the sheet is no longer touched
+ *  for this (2026-08-03: doctor status now lives in Mongo, read straight off the
+ *  visitor returned by findVisitorByTelegramIdMongo). */
+export async function markDoctorExamMongo(rowIndex: number): Promise<void> {
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  await col.updateOne({ _id: rowIndex as never }, { $set: { doctorStatus: nowStamp() } });
+}
+
+/**
+ * 2026-08-03 incident: links a Telegram account directly in the Mongo mirror instead
+ * of the sheet, so a mass re-check-in doesn't hit the Sheets write quota (updateCell
+ * calls have no retry, unlike reads). Mirrors checkin.ts's linkAndCheckIn — same
+ * "already linked to someone else" guard — but Mongo is the write target, not a
+ * mirror of one. The sheet's own Checked in/Telegram ID columns are left blank.
+ */
+export async function linkAndCheckInMongo(
+  rowIndex: number,
+  telegramId: number,
+): Promise<{ ok: boolean; visitor?: Visitor }> {
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  const doc = await col.findOne({ _id: rowIndex as never });
+  if (!doc) return { ok: false };
+
+  const visitor = toVisitor(doc as never);
+  if (visitor.telegramId && visitor.telegramId !== String(telegramId)) {
+    return { ok: false, visitor };
+  }
+
+  const checkedIn = visitor.checkedIn || nowStamp();
+  await col.updateOne(
+    { _id: rowIndex as never },
+    { $set: { telegramId: String(telegramId), checkedIn } },
+  );
+  return { ok: true, visitor: { ...visitor, telegramId: String(telegramId), checkedIn } };
 }

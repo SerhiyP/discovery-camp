@@ -1,12 +1,9 @@
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import type { MessageEntity } from "grammy/types";
 import QRCode from "qrcode";
-import { config, nowStamp, todayISO } from "./config";
-import { updateCell } from "./sheets";
+import { config, todayISO } from "./config";
 import {
-  findByTelegramId,
   isMeaningfulNeed,
-  linkAndCheckIn,
   loadVisitors,
   renameTeamVideo,
   searchByName,
@@ -58,12 +55,12 @@ import {
   syncMCFromSheets,
   unregisterMongo,
 } from "./mc-store";
-import { mongoEnabled } from "./mongo";
 import {
   findVisitorByTelegramIdMongo,
   getVisitorsMongo,
+  linkAndCheckInMongo,
+  markDoctorExamMongo,
   syncVisitorsFromSheets,
-  upsertVisitorMongo,
 } from "./visitor-store";
 
 export const bot = new Bot(config.botToken);
@@ -75,12 +72,16 @@ const isSuperAdmin = (id?: number) => !!id && config.adminIds.includes(id);
  *  name search) must use this rather than re-loading a tab they already have — the
  *  whole camp shares one 60 reads/minute quota, so a duplicate read is a real cost. */
 async function loadRoleContext(telegramId: number) {
-  const [leaderSheet, respSheet, sheet] = await Promise.all([
+  // 2026-08-03 incident: check-in linking moved to Mongo (linkAndCheckInMongo), so the
+  // sheet's own Telegram ID column stays blank going forward — visitor lookup has to
+  // follow the write. Leader/responsible are untouched by the incident and stay on
+  // their own sheets.
+  const [leaderSheet, respSheet, sheet, visitor] = await Promise.all([
     loadLeaders(),
     loadResponsible(),
     loadVisitors(),
+    findVisitorByTelegramIdMongo(telegramId),
   ]);
-  const visitor = findByTelegramId(sheet.visitors, telegramId);
   const asLeader = findLeadersByTelegramId(leaderSheet.leaders, telegramId);
   const asResponsible = findResponsibleByTelegramId(respSheet.responsible, telegramId);
   return {
@@ -131,7 +132,7 @@ async function replyRoleRevoked(ctx: Context, text: string) {
 
 // --- check-in ---
 
-bot.command("start", async (ctx) => {
+bot.command("start", mongoGuarded(async (ctx) => {
   const payload = (ctx.match ?? "").trim();
   const medMatch = /^med_(\d+)$/.exec(payload);
   if (medMatch) return handleDoctorScan(ctx, Number(medMatch[1]));
@@ -161,21 +162,24 @@ bot.command("start", async (ctx) => {
   // /start is the one command everyone knows, so it must repair a missing one.
   await ctx.reply(M.welcome, kb ? { reply_markup: kb } : {});
   return ctx.reply(M.askName);
-});
+}));
 
 /** Admin scanned a participant's personal QR -> mark the medical exam and push the next step. */
 async function handleDoctorScan(ctx: Context, targetId: number) {
-  // Both tabs in one batched read — the doctor scans on the same quota as the queue.
-  const [{ admins }, sheet] = await Promise.all([loadAdmins(), loadVisitors()]);
+  // 2026-08-03: doctor status now lives in Mongo only — the sheet is no longer
+  // touched here (see markDoctorExamMongo, visitor-store.ts).
+  const [{ admins }, visitor] = await Promise.all([
+    loadAdmins(),
+    findVisitorByTelegramIdMongo(targetId),
+  ]);
   if (!isSuperAdmin(ctx.from!.id) && !isAdmin(ctx.from!.id, admins)) {
     return ctx.reply(M.medNotAdmin);
   }
 
-  const visitor = findByTelegramId(sheet.visitors, targetId);
   if (!visitor) return ctx.reply(M.medVisitorNotFound);
   if (visitor.doctorStatus) return ctx.reply(M.medAlreadyDone(visitor.name));
 
-  await updateCell(config.responsesTab, visitor.rowIndex, sheet.cols.doctorStatus, nowStamp());
+  await markDoctorExamMongo(visitor.rowIndex);
   await ctx.reply(M.medMarked(visitor.name, visitor.specialNeeds));
 
   try {
@@ -191,7 +195,7 @@ bot.command("myid", async (ctx) => {
   await ctx.reply(M.yourId(ctx.from!.id), { parse_mode: "HTML" });
 });
 
-bot.command("help", async (ctx) => {
+bot.command("help", mongoGuarded(async (ctx) => {
   const { visitor, roles } = await loadRoleContext(ctx.from!.id);
   if (!roles.isVisitor && !roles.isLeader && !roles.isResponsible) {
     return ctx.reply(`${M.generalInfo}\n\n${M.mustCheckInFirst}`);
@@ -208,7 +212,7 @@ bot.command("help", async (ctx) => {
     [infoLine, roleCapabilitiesText(roles), M.infoChannel].filter(Boolean).join("\n\n"),
     kb ? { reply_markup: kb } : {},
   );
-});
+}));
 
 // Leader linking is command-gated: the name arrives as the command argument, so a plain
 // text message never searches the Leaders table. See docs/superpowers/specs/2026-08-01-*.
@@ -325,16 +329,22 @@ async function sendMedQr(ctx: Context): Promise<unknown> {
   return ctx.replyWithPhoto(new InputFile(png, "med-qr.png"), { caption: M.medQrCaption });
 }
 
-bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
-  // Answer before touching the sheet. Telegram invalidates a callback query about 15
-  // seconds after the tap, and the reads below can outlast that under load — answering
+bot.callbackQuery(/^link:(\d+)$/, mongoGuarded(async (ctx) => {
+  // Answer before touching Mongo. Telegram invalidates a callback query about 15
+  // seconds after the tap, and the calls below can outlast that under load — answering
   // afterwards used to throw ("query is too old") once the row had already been written.
   await safeAnswer(ctx);
 
   const rowIndex = Number(ctx.match[1]);
-  const sheet = await loadVisitors();
 
-  const already = findByTelegramId(sheet.visitors, ctx.from.id);
+  // 2026-08-03 incident: check-in linking moved onto Mongo (linkAndCheckInMongo) so a
+  // mass re-check-in doesn't hit the Sheets write quota — see visitor-store.ts. The
+  // sheet's Checked in/Telegram ID columns are no longer written here. doctorStatus
+  // and paymentStatus are synced into the mirror by /syncvisitors (paymentStatus is
+  // part of the stable IMPORTRANGE'd block; doctorStatus is trusted as synced too —
+  // see visitor-store.ts for the residual-risk note), so the gate reads them straight
+  // off Mongo.
+  const already = await findVisitorByTelegramIdMongo(ctx.from.id);
   if (already) {
     await tryTelegram("editMessageText", () => ctx.editMessageText(M.alreadyLinked(already.name)));
     // Recovery: a redelivered update or a second tap must still hand over the QR while
@@ -343,29 +353,21 @@ bot.callbackQuery(/^link:(\d+)$/, async (ctx) => {
     return;
   }
 
-  const { ok, visitor } = await linkAndCheckIn(sheet, rowIndex, ctx.from.id);
+  const { ok, visitor } = await linkAndCheckInMongo(rowIndex, ctx.from.id);
   if (!ok || !visitor) {
     return tryTelegram("editMessageText", () => ctx.editMessageText(M.rowTaken));
   }
 
-  if (mongoEnabled()) {
-    // Best-effort: check-in is Sheets-owned and must not break on a Mongo outage.
-    upsertVisitorMongo({
-      ...visitor,
-      telegramId: String(ctx.from.id),
-      checkedIn: visitor.checkedIn || nowStamp(),
-    }).catch((err) => console.error("visitor write-through failed", err));
-  }
-
   await tryTelegram("deleteMessage", () => ctx.deleteMessage());
 
-  // Re-link of an already-processed participant: skip straight to the final message.
+  // Already fully processed before the incident (doctor + payment confirmed): skip
+  // straight to the final message. Otherwise, full flow as normal — med QR first.
   if (visitor.doctorStatus && visitor.paymentStatus) {
     return sendFinalMessage(ctx, visitor);
   }
 
   return sendMedQr(ctx);
-});
+}));
 
 /**
  * Final registration message: team, leader names, room, then the role keyboard,
@@ -412,7 +414,7 @@ async function sendFinalMessage(
 }
 
 // Participant taps "Я пройшов(ла) Аню" -> send the final message once payment is marked.
-bot.callbackQuery("checkanya", async (ctx) => {
+bot.callbackQuery("checkanya", mongoGuarded(async (ctx) => {
   // Already linked by definition here, so the roles in this context stay valid for
   // the final message — hand it over instead of reading the same three tabs again.
   const context = await loadRoleContext(ctx.from.id);
@@ -424,7 +426,7 @@ bot.callbackQuery("checkanya", async (ctx) => {
   await safeAnswer(ctx);
   await ctx.deleteMessage();
   await sendFinalMessage(ctx, me, context);
-});
+}));
 
 // Role-linking (👑/🎨) buttons stay valid in Telegram forever, so someone scrolling up in
 // old chat history could tap a button sent before this staleness guard existed. Rejecting
@@ -1281,7 +1283,7 @@ bot.hears(BTN.mcNotify, async (ctx) =>
 
 // --- name search (must be after commands) ---
 
-bot.on("message:text", async (ctx) => {
+bot.on("message:text", mongoGuarded(async (ctx) => {
   const {
     sheet,
     visitor: meVisitor,
@@ -1308,7 +1310,7 @@ bot.on("message:text", async (ctx) => {
   }
   for (const v of visitorMatches) kb.text(v.name, `link:${v.rowIndex}`).row();
   return ctx.reply(M.chooseYourself, { reply_markup: kb });
-});
+}));
 
 // Scoped command menus are NOT rebuilt on cold start. Telegram stores them server-side
 // permanently, and they are already updated incrementally whenever a role changes (see
