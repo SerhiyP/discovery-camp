@@ -677,12 +677,21 @@ bot.command("broadcast", async (ctx) => {
   const { visitors } = await loadVisitors();
   const ids = [...new Set(visitors.filter((v) => v.telegramId).map((v) => v.telegramId))];
   let sent = 0;
-  for (const id of ids) {
-    try {
-      await bot.api.sendMessage(id, text);
-      sent++;
-    } catch {
-      // user blocked the bot etc.
+  const CHUNK_SIZE = 15;
+  for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + CHUNK_SIZE);
+    await Promise.all(
+      chunk.map(async (id) => {
+        try {
+          await bot.api.sendMessage(id, text);
+          sent++;
+        } catch {
+          // user blocked the bot etc.
+        }
+      }),
+    );
+    if (i + CHUNK_SIZE < ids.length) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
   return ctx.reply(`Sent to ${sent}/${ids.length}`);
