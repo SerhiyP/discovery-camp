@@ -223,8 +223,15 @@ export const M = {
     `👥 Команда ${team} — ${count} ${pluralUk(count, "учасник", "учасники", "учасників")}`,
   // `needs` is pre-filtered by isMeaningfulNeed() — a roster of "⚠️ Ні" lines would
   // train leaders to skip the warnings that matter.
-  teamRosterLine: (n: number, name: string, age: string, room: string, needs: string) =>
-    `${n}. ${name}${age ? ` — ${age} р.` : ""}${room ? ` · 🚪 ${room}` : ""}` +
+  teamRosterLine: (
+    n: number,
+    name: string,
+    age: string,
+    room: string,
+    needs: string,
+    checkedIn: boolean,
+  ) =>
+    `${n}. ${checkedIn ? "✅" : "⏳"} ${name}${age ? ` — ${age} р.` : ""}${room ? ` · 🚪 ${room}` : ""}` +
     (needs ? `\n   ⚠️ ${needs}` : ""),
   teamEmpty: "У команді немає учасників.",
   teamMcHeader: (team: string) => `🎨 Команда ${team} — МК сьогодні`,

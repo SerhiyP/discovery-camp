@@ -688,12 +688,14 @@ bot.on(["message:video", "message:video_note"], async (ctx) => {
   return ctx.reply(M.videoMultiTeamHint(myTeams.join(", ")));
 });
 
-bot.command("broadcast", async (ctx) => {
+bot.command("broadcast", mongoGuarded(async (ctx) => {
   const { admins } = await loadAdmins();
   if (!isAdmin(ctx.from?.id, admins)) return;
   const text = ctx.match;
   if (!text) return ctx.reply("Usage: /broadcast <text>");
-  const { visitors } = await loadVisitors();
+  // 2026-08-03 incident: check-in linking moved onto Mongo (linkAndCheckInMongo), so
+  // the sheet's own Telegram ID column stays blank going forward — read the mirror.
+  const visitors = await getVisitorsMongo();
   const ids = [...new Set(visitors.filter((v) => v.telegramId).map((v) => v.telegramId))];
   let sent = 0;
   const CHUNK_SIZE = 15;
@@ -714,7 +716,7 @@ bot.command("broadcast", async (ctx) => {
     }
   }
   return ctx.reply(`Sent to ${sent}/${ids.length}`);
-});
+}));
 
 // --- admin commands ---
 
@@ -996,14 +998,16 @@ bot.command("listadmins", async (ctx) => {
 
 // --- leader commands ---
 
-bot.command("notifyteam", async (ctx) => {
+bot.command("notifyteam", mongoGuarded(async (ctx) => {
   const text = ctx.match.trim();
   if (!text) return ctx.reply(M.notifyTeamNoText);
   const { leaders } = await loadLeaders();
   const mine = findLeadersByTelegramId(leaders, ctx.from!.id);
   if (mine.length === 0) return ctx.reply(M.notLeader);
   const myTeams = [...new Set(mine.map((l) => l.team))];
-  const { visitors } = await loadVisitors();
+  // 2026-08-03 incident: check-in linking moved onto Mongo (linkAndCheckInMongo), so
+  // the sheet's own Telegram ID column stays blank going forward — read the mirror.
+  const visitors = await getVisitorsMongo();
   const members = visitors.filter(
     (v) => v.telegramId && myTeams.some((t) => t.toLowerCase() === v.team.toLowerCase()),
   );
@@ -1019,7 +1023,7 @@ bot.command("notifyteam", async (ctx) => {
     }
   }
   return ctx.reply(M.notifyTeamSent(sent, myTeams.join(", ")));
-});
+}));
 
 bot.command("renameteam", async (ctx) => {
   const newName = ctx.match.trim();
@@ -1088,6 +1092,7 @@ async function handleTeamRoster(ctx: Context) {
           v.age,
           v.room,
           isMeaningfulNeed(v.specialNeeds) ? v.specialNeeds : "",
+          !!v.checkedIn,
         ),
       ),
     );
