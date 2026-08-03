@@ -29,10 +29,6 @@ means the request still happens and moving the others saves nothing.
 
 ## Non-goals
 
-- The badge-grid schedule (`config.gridSheetId`, tab `3.Розклад табору 2026`, read by
-  `schedule.ts`). It is a separate, human-maintained, read-only spreadsheet behind a
-  button pressed occasionally. It still costs one read against the same per-user quota,
-  and is left alone deliberately.
 - Removing Sheets. It stays the human-facing surface and the source of truth for
   everything humans and Google Forms write.
 - A Sheets fallback path for registration when Mongo is unavailable. See
@@ -48,7 +44,7 @@ means the request still happens and moving the others saves nothing.
 | Payment + doctor gate | Sheets | **never cached** — read live |
 | Leaders, MCResponsible, Admins | Sheets | cache; refreshed by `/syncroles` and written through on every bot write |
 | **Videos** | **Mongo, only copy** | leaders write it by sending a video; the tab is imported once and then unused |
-| Badge-grid schedule | Sheets (`gridSheetId`) | not cached — out of scope |
+| Badge-grid schedule | Sheets (`gridSheetId`) | cache; refreshed by `/syncschedule` |
 
 The Visitors row is the important one. The bot never writes `Статус оплати`; Аня marks it
 by hand, and new participants arrive from a Google Form. Mongo therefore cannot own that
@@ -67,6 +63,7 @@ responsible     { _id: rowIndex, mcId, name, telegramId }
 admins          { _id: rowIndex, telegramId, name }
 videos          { _id: videoId, fileId, type }
 teams           { _id: teamId, name }
+campSchedule    { _id: "grid", slots: [{ time, activity }] }
 registrations   { date, slot, mcId, telegramId, registeredAt,
                   active: true, cancelledAt }
 ```
@@ -184,6 +181,21 @@ Staff reading that tab see the original name; the bot shows the new one everywhe
 `linkResponsibleRows` has the same per-row write loop, but touches one to three rows for a
 single person on a command run a handful of times per camp. Left alone.
 
+### Camp schedule
+
+`🗓 Розклад` reads a second spreadsheet (`config.gridSheetId`, tab
+`3.Розклад табору 2026`). It is human-maintained, read-only, unchanged for the whole camp,
+and pressed many times a day — the strongest cache candidate in the system.
+
+`schedule.ts` applies no per-date filtering: it reads columns 8 and 9 of every row, so the
+slot list is identical on every camp day. Only `dayLabel`, `isToday` and `isCurrent` are
+derived from the clock. The cache is therefore a single document holding the slot list,
+with all date and time logic staying in `schedule.ts` and running per request.
+
+`loadTodaySchedule()` keeps its exact signature and `ScheduleResult` shape; only the row
+fetch is swapped. An empty collection returns `{ status: "unavailable" }`, matching the
+current behaviour when the grid is unreadable.
+
 ### Admin commands
 
 - `/syncmc` — re-read `MCSchedule`, replace catalog, schedule and topics. Reports counts.
@@ -193,6 +205,7 @@ single person on a command run a handful of times per camp. Left alone.
   owns both, so replacing them from Sheets would discard videos leaders have set and
   revert team renames.
 - `/syncvideo` — import the `Videos` tab into Mongo. Run once at rollout; safe to re-run.
+- `/syncschedule` — refresh the camp schedule from the badge-grid spreadsheet.
 There is no registration export. Registrations live in Mongo and stay there.
 
 All three are admin-gated and typed-only, following the `/syncresp` precedent.
@@ -230,6 +243,8 @@ Following the pattern established by the quota work — stubbed drivers, no live
 - A team with no video falls back to `DEFAULT_VIDEO_FILE_ID`.
 - Renaming a team issues no Sheets write at all, and survives a `/syncvisitors` run.
 - `/syncvideo` is safe to re-run: a video a leader set after the import is not overwritten.
+- `🗓 Розклад` issues no Sheets request, still highlights the current activity from the
+  clock, and reports "unavailable" when the schedule collection is empty.
 - `/start` for a checked-in visitor issues no Sheets request at all — the measurable
   restatement of the "zero on the common path" goal, in the style of the existing
   `checkin-reads` suite.
@@ -267,7 +282,12 @@ rendered. With the catalog and registrations in Mongo, the whole masterclass pat
 listing, registering, cancelling, `📋 Мої реєстрації` — costs zero Sheets reads without
 any of steps 3–5.
 
-Ship 1–2 before the next reminder. Treat 3–5 as post-camp.
+The camp schedule ships alongside them. It is read-only, static for the whole camp, and
+pressed many times a day, so it is the cheapest remaining read to eliminate and carries
+almost no risk: no writes, no staleness beyond an admin editing the grid, and a single
+document.
+
+Ship 1–2 plus the schedule before the next reminder. Treat 3–5 as post-camp.
 
 Each step is independently revertible.
 
