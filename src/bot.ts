@@ -58,11 +58,13 @@ import {
   unregisterMongo,
 } from "./mc-store";
 import {
+  findVisitorByRowMongo,
   findVisitorByTelegramIdMongo,
   getVisitorsMongo,
   linkAndCheckInMongo,
   markDoctorExamMongo,
   refreshPaymentStatusMongo,
+  releaseCheckInMongo,
   syncVisitorsFromSheets,
 } from "./visitor-store";
 
@@ -920,6 +922,68 @@ bot.command("fixcheckin", mongoGuarded(async (ctx) => {
   if (!picker) return ctx.reply(M.fixCheckinNotFound);
   return ctx.reply(picker.text, { parse_mode: "HTML", reply_markup: picker.kb });
 }));
+
+bot.callbackQuery(/^fixci:(\d+)$/, mongoGuarded(async (ctx) => {
+  // Answer first: Telegram invalidates the query ~15s after the tap, and answering after
+  // the reads below has already cost this bot a committed write with no reply.
+  await safeAnswer(ctx);
+
+  const rowIndex = Number(ctx.match[1]);
+  const visitor = await findVisitorByRowMongo(rowIndex);
+  if (!visitor || !visitor.telegramId) {
+    return tryTelegram("editMessageText", () => ctx.editMessageText(M.fixCheckinAlreadyFree));
+  }
+
+  // Resolve the block before entering tryTelegram — its callback is a plain arrow, so an
+  // await inside it would not compile.
+  const block = await fixCheckinBlock(visitor);
+  const kb = new InlineKeyboard()
+    .text("✅ Так, скасувати", `fixciyes:${rowIndex}`)
+    .text("↩️ Скасувати", "fixcicancel");
+  return tryTelegram("editMessageText", () =>
+    ctx.editMessageText(M.fixCheckinConfirm(block), {
+      parse_mode: "HTML",
+      reply_markup: kb,
+    }),
+  );
+}));
+
+bot.callbackQuery(/^fixciyes:(\d+)$/, mongoGuarded(async (ctx) => {
+  await safeAnswer(ctx);
+
+  const rowIndex = Number(ctx.match[1]);
+  const released = await releaseCheckInMongo(rowIndex);
+  // Guarded update, so this also covers a second admin (or a redelivered update) getting
+  // here first — the row is released exactly once and notified exactly once.
+  if (!released) {
+    return tryTelegram("editMessageText", () => ctx.editMessageText(M.fixCheckinAlreadyFree));
+  }
+
+  // Best effort: the account may have blocked the bot, and a failed DM must not undo a
+  // release that already committed. remove_keyboard drops the now-invalid visitor buttons
+  // in one go rather than letting them fail one tap at a time — same reasoning as
+  // replyRoleRevoked.
+  let notified = true;
+  try {
+    await bot.api.sendMessage(Number(released.telegramId), M.fixCheckinReleasedDm, {
+      reply_markup: { remove_keyboard: true },
+    });
+  } catch (err) {
+    console.error("fixcheckin: notifying released account failed", released.telegramId, err);
+    notified = false;
+  }
+
+  return tryTelegram("editMessageText", () =>
+    ctx.editMessageText(M.fixCheckinDone(released.name, released.telegramId, notified), {
+      parse_mode: "HTML",
+    }),
+  );
+}));
+
+bot.callbackQuery("fixcicancel", async (ctx) => {
+  await safeAnswer(ctx);
+  return tryTelegram("editMessageText", () => ctx.editMessageText(M.fixCheckinCancelled));
+});
 
 async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promise<void> {
   let buf: string[] = [];
