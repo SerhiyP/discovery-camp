@@ -262,7 +262,7 @@ export const M = {
     `Надіслано ${sent}/${total} учасникам «${title}» (${slot}) ✅`,
 
   // Phishing awareness
-  phishCaught: "🎣 Ви попались! Це був навчальний фішинг — обговоримо це на майстер-класі.",
+  phishCaught: "🎣 Ви попались! Це був навчальний фішинг — обговоримо це на майстер-класі по захисту телефона.",
   caughtHeader: (title: string, slot: string) => `Спіймані на «${title}» (${slot}):`,
   noCatches: "— поки ніхто не попався",
   caughtChoose: "Результати якого майстер-класу показати?",
