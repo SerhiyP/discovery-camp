@@ -12,6 +12,7 @@ import {
   videoForTeam,
   visitorsByTeam,
 } from "./checkin";
+import { broadcastEntities } from "./broadcast";
 import {
   activeRegs,
   buildSlotButtons,
@@ -60,6 +61,7 @@ import {
 import {
   findVisitorByRowMongo,
   findVisitorByTelegramIdMongo,
+  findVisitorByTelegramIdMongoOnly,
   getVisitorsMongo,
   linkAndCheckInMongo,
   markDoctorExamMongo,
@@ -316,6 +318,21 @@ function safeAnswer(
   ...args: Parameters<Context["answerCallbackQuery"]>
 ): Promise<void> {
   return tryTelegram("answerCallbackQuery", () => ctx.answerCallbackQuery(...args));
+}
+
+/** Admin gate for a callback tap, mirroring the `isAdmin` check on the command that
+ *  produced the button. Callback data is client-supplied and Telegram does not validate
+ *  it against the message's actual buttons, so anyone who has ever received an inline
+ *  keyboard from this bot (everyone, via the masterclass list) can invent a tap on an
+ *  admin-only button with a guessed row index. Gating the command alone protects nothing;
+ *  the handler has to check too. Call this *after* safeAnswer, so the spinner is dismissed
+ *  before the Sheets read — one extra read is affordable on these rare admin flows.
+ *  Denial is a real message, not just a toast. */
+async function callbackByAdmin(ctx: Context): Promise<boolean> {
+  const { admins } = await loadAdmins();
+  if (isAdmin(ctx.from?.id, admins)) return true;
+  await ctx.reply(M.notAdmin).catch(() => {});
+  return false;
 }
 
 /** Wraps a Mongo-backed handler. On failure it logs and answers with M.tryAgainLater
@@ -705,6 +722,7 @@ bot.command("broadcast", mongoGuarded(async (ctx) => {
   if (!isAdmin(ctx.from?.id, admins)) return;
   const text = ctx.match;
   if (!text) return ctx.reply("Usage: /broadcast <text>");
+  const entities = broadcastEntities(ctx.message?.text, text, ctx.message?.entities);
   // 2026-08-03 incident: check-in linking moved onto Mongo (linkAndCheckInMongo), so
   // the sheet's own Telegram ID column stays blank going forward — read the mirror.
   const visitors = await getVisitorsMongo();
@@ -716,7 +734,7 @@ bot.command("broadcast", mongoGuarded(async (ctx) => {
     await Promise.all(
       chunk.map(async (id) => {
         try {
-          await bot.api.sendMessage(id, text);
+          await bot.api.sendMessage(id, text, entities.length ? { entities } : {});
           sent++;
         } catch {
           // user blocked the bot etc.
@@ -810,10 +828,11 @@ bot.command("delresp", async (ctx) => {
 });
 
 bot.callbackQuery(/^delresp:(\d+)$/, async (ctx) => {
+  await safeAnswer(ctx);
+  if (!(await callbackByAdmin(ctx))) return;
   const rowIndex = Number(ctx.match[1]);
   const { responsible } = await loadResponsible();
   const row = responsible.find((r) => r.rowIndex === rowIndex);
-  await safeAnswer(ctx);
   if (!row) return ctx.editMessageText(M.delRespGone);
   const mcs = await loadMasterclasses();
   const title = mcs.find((m) => m.id === row.mcId)?.title ?? `МК ${row.mcId}`;
@@ -824,10 +843,11 @@ bot.callbackQuery(/^delresp:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^delrespyes:(\d+)$/, async (ctx) => {
+  await safeAnswer(ctx);
+  if (!(await callbackByAdmin(ctx))) return;
   const rowIndex = Number(ctx.match[1]);
   const { responsible } = await loadResponsible();
   const row = responsible.find((r) => r.rowIndex === rowIndex);
-  await safeAnswer(ctx);
   if (!row) return ctx.editMessageText(M.delRespGone);
   await removeResponsibleByRow(rowIndex);
   const mcs = await loadMasterclasses();
@@ -837,6 +857,7 @@ bot.callbackQuery(/^delrespyes:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery("delrespcancel", async (ctx) => {
   await safeAnswer(ctx);
+  if (!(await callbackByAdmin(ctx))) return;
   const picker = await buildDelRespPicker();
   if (!picker) return ctx.editMessageText(M.noResponsiblePersons);
   return ctx.editMessageText(picker.text, { reply_markup: picker.kb });
@@ -886,9 +907,11 @@ async function buildFixCheckinPicker(
   query: string,
 ): Promise<{ text: string; kb: InlineKeyboard } | null> {
   // By Telegram ID: the other end of a swap, when the admin has the person in front of
-  // them but not the name they mistakenly claimed.
+  // them but not the name they mistakenly claimed. Mongo-only — the fallback inside
+  // findVisitorByTelegramIdMongo would spend a Visitors-tab read on every mistyped ID,
+  // which is the common case here.
   const matches = FIXCHECKIN_ID_RE.test(query)
-    ? [await findVisitorByTelegramIdMongo(Number(query))].filter((v): v is Visitor => !!v)
+    ? [await findVisitorByTelegramIdMongoOnly(Number(query))].filter((v): v is Visitor => !!v)
     : searchByName(await getVisitorsMongo(), query);
   if (matches.length === 0) return null;
 
@@ -927,6 +950,9 @@ bot.callbackQuery(/^fixci:(\d+)$/, mongoGuarded(async (ctx) => {
   // Answer first: Telegram invalidates the query ~15s after the tap, and answering after
   // the reads below has already cost this bot a committed write with no reply.
   await safeAnswer(ctx);
+  // This screen reveals another participant's name, room and the Telegram identity of
+  // whoever claimed their row — admins only, however the tap was produced.
+  if (!(await callbackByAdmin(ctx))) return;
 
   const rowIndex = Number(ctx.match[1]);
   const visitor = await findVisitorByRowMongo(rowIndex);
@@ -937,8 +963,11 @@ bot.callbackQuery(/^fixci:(\d+)$/, mongoGuarded(async (ctx) => {
   // Resolve the block before entering tryTelegram — its callback is a plain arrow, so an
   // await inside it would not compile.
   const block = await fixCheckinBlock(visitor);
+  // The holder rides in the callback data so the release is a compare-and-swap against
+  // the holder shown right here: if the row changes hands while this screen sits open,
+  // confirming must not release whoever holds it by then. ~24 bytes, well inside 64.
   const kb = new InlineKeyboard()
-    .text("✅ Так, скасувати", `fixciyes:${rowIndex}`)
+    .text("✅ Так, скасувати", `fixciyes:${rowIndex}:${visitor.telegramId}`)
     .text("↩️ Скасувати", "fixcicancel");
   return tryTelegram("editMessageText", () =>
     ctx.editMessageText(M.fixCheckinConfirm(block), {
@@ -948,25 +977,37 @@ bot.callbackQuery(/^fixci:(\d+)$/, mongoGuarded(async (ctx) => {
   );
 }));
 
-bot.callbackQuery(/^fixciyes:(\d+)$/, mongoGuarded(async (ctx) => {
+bot.callbackQuery(/^fixciyes:(\d+):(\d+)$/, mongoGuarded(async (ctx) => {
   await safeAnswer(ctx);
+  // Un-checks-in an arbitrary person and DMs them — admins only, however the tap arrived.
+  if (!(await callbackByAdmin(ctx))) return;
 
   const rowIndex = Number(ctx.match[1]);
-  const released = await releaseCheckInMongo(rowIndex);
-  // Guarded update, so this also covers a second admin (or a redelivered update) getting
-  // here first — the row is released exactly once and notified exactly once.
+  const expectedHolder = ctx.match[2];
+  const released = await releaseCheckInMongo(rowIndex, expectedHolder);
+  // Single guarded compare-and-swap, so this also covers a second admin (or a redelivered
+  // update) getting here first, and a row that changed hands since the confirm screen was
+  // drawn — the row is released exactly once and notified exactly once, and only ever the
+  // holder the admin actually looked at.
   if (!released) {
     return tryTelegram("editMessageText", () => ctx.editMessageText(M.fixCheckinAlreadyFree));
   }
 
+  // The keyboard is recomputed, not blanked: this person is no longer a visitor, but they
+  // may still be a leader or responsible, and a flat remove_keyboard would strip those
+  // buttons until their next /start. Same doctrine as replyRoleRevoked. Resolved outside
+  // the DM's try/catch on purpose — a failed role lookup (Sheets quota, Mongo hiccup) must
+  // degrade the markup, never cost the person the message telling them to check in again.
+  const kb = await keyboardForUser(Number(released.telegramId)).catch((err) => {
+    console.error("fixcheckin: keyboard for released account failed", released.telegramId, err);
+    return undefined;
+  });
   // Best effort: the account may have blocked the bot, and a failed DM must not undo a
-  // release that already committed. remove_keyboard drops the now-invalid visitor buttons
-  // in one go rather than letting them fail one tap at a time — same reasoning as
-  // replyRoleRevoked.
+  // release that already committed.
   let notified = true;
   try {
     await bot.api.sendMessage(Number(released.telegramId), M.fixCheckinReleasedDm, {
-      reply_markup: { remove_keyboard: true },
+      reply_markup: kb ?? { remove_keyboard: true },
     });
   } catch (err) {
     console.error("fixcheckin: notifying released account failed", released.telegramId, err);
@@ -982,6 +1023,7 @@ bot.callbackQuery(/^fixciyes:(\d+)$/, mongoGuarded(async (ctx) => {
 
 bot.callbackQuery("fixcicancel", async (ctx) => {
   await safeAnswer(ctx);
+  if (!(await callbackByAdmin(ctx))) return;
   return tryTelegram("editMessageText", () => ctx.editMessageText(M.fixCheckinCancelled));
 });
 

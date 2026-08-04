@@ -275,7 +275,12 @@ export const M = {
   fixCheckinBtn: (name: string) =>
     `♻️ Скасувати чек-ін: ${name.length > 24 ? `${name.slice(0, 23)}…` : name}`,
   fixCheckinConfirm: (block: string) => `${block}\n\nСкасувати чек-ін цієї людини?`,
-  fixCheckinAlreadyFree: "Цей рядок уже вільний — чек-ін скасовано раніше.",
+  // Covers both outcomes of the release compare-and-swap: the row was already free, and
+  // the row changed hands after this confirm screen was drawn (someone else released it
+  // and the right person has since checked in). Nothing was written in either case.
+  fixCheckinAlreadyFree:
+    "Нічого не змінено: цей чек-ін уже скасовано раніше " +
+    "або рядок тим часом зайняла інша людина. Перевірте /fixcheckin ще раз.",
   fixCheckinDone: (name: string, id: string, notified: boolean) =>
     `Чек-ін скасовано ✅\n${escapeHtml(name)} · ID: <code>${id}</code>\n` +
     (notified
