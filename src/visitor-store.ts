@@ -65,18 +65,49 @@ export async function getVisitorsMongo(): Promise<Visitor[]> {
   return docs.map((d) => toVisitor(d as never));
 }
 
-/** Mongo lookup by Telegram ID. On a miss, falls back to one Sheets read and
- *  back-fills the mirror — covers a check-in that happened after the last sync
- *  when the write-through also failed. */
-export async function findVisitorByTelegramIdMongo(
+/** Mongo lookup by Telegram ID with no Sheets fallback. Use this wherever a miss is the
+ *  routine case (a mistyped ID in /fixcheckin) or the caller must not spend a read from
+ *  the camp's shared 60-reads-per-minute Sheets quota. */
+export async function findVisitorByTelegramIdMongoOnly(
   telegramId: number,
 ): Promise<Visitor | undefined> {
   const col = (await db()).collection(COLLECTIONS.visitors);
   const doc = await col.findOne({ telegramId: String(telegramId) });
-  if (doc) return toVisitor(doc as never);
+  return doc ? toVisitor(doc as never) : undefined;
+}
+
+/**
+ * Mongo lookup by Telegram ID, with one Sheets read as a fallback on a miss.
+ *
+ * The fallback only back-fills a row the mirror does not have **at all**. If the mirror
+ * does hold that row and simply does not point at this account, Mongo wins and the answer
+ * is "no row" — a deliberate release must beat a stale sheet cell. Since 2026-08-03
+ * nothing writes the sheet's `Checked in` / `Telegram ID` columns, so an ID sitting there
+ * is at best a pre-migration leftover, while the mirror's state is what /fixcheckin's
+ * release (and every check-in since the migration) actually wrote. Trusting the sheet here
+ * silently resurrects a released link: the released account presses /start as its DM tells
+ * it to, the stale cell rewrites the doc through upsertVisitorMongo, telegramId/checkedIn
+ * come back and doctorStatus/paymentStatus are overwritten with the sheet's frozen values —
+ * with no error anywhere and the right person still locked out.
+ *
+ * The mirror's row is the release marker, so no extra field is needed (and a `releasedAt`
+ * flag would be wiped by syncVisitorsFromSheets' replace anyway).
+ */
+export async function findVisitorByTelegramIdMongo(
+  telegramId: number,
+): Promise<Visitor | undefined> {
+  const mirrored = await findVisitorByTelegramIdMongoOnly(telegramId);
+  if (mirrored) return mirrored;
+
   const { visitors } = await loadVisitors();
   const v = visitors.find((x) => x.telegramId === String(telegramId));
-  if (v) await upsertVisitorMongo(v).catch(() => {});
+  if (!v) return undefined;
+
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  const mirroredRow = await col.findOne({ _id: v.rowIndex as never }, { projection: { _id: 1 } });
+  if (mirroredRow) return undefined; // mirror knows this row and disagrees — it wins.
+
+  await upsertVisitorMongo(v).catch(() => {});
   return v;
 }
 
@@ -175,11 +206,24 @@ export async function findVisitorByRowMongo(rowIndex: number): Promise<Visitor |
  * Returns the pre-release visitor, because the caller needs the old telegramId to notify
  * that account. The clear is a single guarded findOneAndUpdate rather than read-then-write,
  * so two admins racing on the same row produce exactly one release and one notification.
+ *
+ * It is a compare-and-swap, not just an "is it claimed" check: `expectedTelegramId` is the
+ * holder the admin saw on the confirm screen, and a row that changed hands in the meantime
+ * does not match. Without it, a confirm screen left open while a second admin released the
+ * row and the *right* person re-claimed it would release that legitimate check-in — and the
+ * right person is standing at the desk at exactly that moment, which is the whole point of
+ * the feature. A no-match returns undefined, which the caller reports as "already free".
  */
-export async function releaseCheckInMongo(rowIndex: number): Promise<Visitor | undefined> {
+export async function releaseCheckInMongo(
+  rowIndex: number,
+  expectedTelegramId: string,
+): Promise<Visitor | undefined> {
+  // A free row stores telegramId: "", so an empty expectation would match one and "release"
+  // it — returning a visitor whose telegramId is empty for the caller to then DM.
+  if (!expectedTelegramId) return undefined;
   const col = (await db()).collection(COLLECTIONS.visitors);
   const before = await col.findOneAndUpdate(
-    { _id: rowIndex as never, telegramId: { $type: "string", $ne: "" } },
+    { _id: rowIndex as never, telegramId: expectedTelegramId },
     { $set: { telegramId: "", checkedIn: "" } },
     { returnDocument: "before" },
   );
