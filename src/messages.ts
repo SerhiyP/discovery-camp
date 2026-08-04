@@ -203,6 +203,11 @@ export const M = {
   statsSlotLine: (slot: string, count: number) => `  ${slot}: ${count}`,
   statsRegsTotal: (total: number) => `Всього реєстрацій: ${total}`,
   statsNoRegs: "Реєстрацій на МК ще немає.",
+  statsPhishTitle: "🎣 Фішинг:",
+  statsPhishCaught: (unique: number, events: number) =>
+    `Спіймано: ${unique} осіб (${events} спрацювань)`,
+  statsPhishNoCatches: "Ще ніхто не попався.",
+  statsPhishDayLine: (date: string, count: number) => `  ${date}: ${count}`,
   tryAgainLater: "Тимчасова помилка. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",

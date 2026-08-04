@@ -43,7 +43,7 @@ import {
   removeResponsibleByRow,
   searchResponsibleByName,
 } from "./responsible";
-import { loadCatches, logCatch } from "./phishing";
+import { loadCatches, logCatch, type PhishCatch } from "./phishing";
 import {
   asMCRegistrations,
   ensureIndexes,
@@ -856,7 +856,30 @@ async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promis
   if (buf.length > 0) await ctx.reply(buf.join("\n"));
 }
 
-function formatStats(visitors: Visitor[], regs: MongoRegistration[]): string[] {
+function formatPhishStats(catches: PhishCatch[]): string[] {
+  const earliestByTelegramId = new Map<string, string>();
+  for (const c of catches) {
+    const existing = earliestByTelegramId.get(c.telegramId);
+    if (!existing || c.caughtAt < existing) earliestByTelegramId.set(c.telegramId, c.caughtAt);
+  }
+  const lines = [M.statsPhishTitle];
+  if (earliestByTelegramId.size === 0) {
+    lines.push(M.statsPhishNoCatches);
+    return lines;
+  }
+  lines.push(M.statsPhishCaught(earliestByTelegramId.size, catches.length), "");
+  const byDate = new Map<string, number>();
+  for (const caughtAt of earliestByTelegramId.values()) {
+    const date = caughtAt.slice(0, 10);
+    byDate.set(date, (byDate.get(date) ?? 0) + 1);
+  }
+  for (const date of [...byDate.keys()].sort()) {
+    lines.push(M.statsPhishDayLine(date, byDate.get(date)!));
+  }
+  return lines;
+}
+
+function formatStats(visitors: Visitor[], regs: MongoRegistration[], catches: PhishCatch[]): string[] {
   const total = visitors.length;
   const checkedIn = visitors.filter((v) => v.checkedIn !== "").length;
   const pct = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
@@ -883,16 +906,17 @@ function formatStats(visitors: Visitor[], regs: MongoRegistration[]): string[] {
   ];
   if (dates.length === 0) {
     lines.push(M.statsNoRegs);
-    return lines;
-  }
-  lines.push(M.statsRegsTitle);
-  for (const date of dates) {
-    lines.push(date);
-    for (const slot of [...byDate.get(date)!.keys()].sort()) {
-      lines.push(M.statsSlotLine(slot, byDate.get(date)!.get(slot)!));
+  } else {
+    lines.push(M.statsRegsTitle);
+    for (const date of dates) {
+      lines.push(date);
+      for (const slot of [...byDate.get(date)!.keys()].sort()) {
+        lines.push(M.statsSlotLine(slot, byDate.get(date)!.get(slot)!));
+      }
     }
+    lines.push("", M.statsRegsTotal(active.length));
   }
-  lines.push("", M.statsRegsTotal(active.length));
+  lines.push("", ...formatPhishStats(catches));
   return lines;
 }
 
@@ -962,8 +986,12 @@ bot.command("stats", async (ctx) => {
   const { admins } = await loadAdmins();
   if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
   try {
-    const [visitors, regs] = await Promise.all([getVisitorsMongo(), getRegistrations()]);
-    return replyChunked(ctx, formatStats(visitors, regs));
+    const [visitors, regs, catches] = await Promise.all([
+      getVisitorsMongo(),
+      getRegistrations(),
+      loadCatches(),
+    ]);
+    return replyChunked(ctx, formatStats(visitors, regs, catches));
   } catch (err) {
     console.error("stats failed", err);
     return ctx.reply(M.statsFailed);
