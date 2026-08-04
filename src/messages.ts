@@ -13,6 +13,35 @@ function pluralUk(n: number, one: string, few: string, many: string): string {
   return many;
 }
 
+/** Telegram identity of the account holding a visitor row, resolved at render time by
+ *  the caller. `name` is empty when the lookup failed (deleted account, bot blocked) —
+ *  the ID alone still renders, so the admin always has something to copy. */
+export interface HolderInfo {
+  id: string;
+  name: string;
+  username?: string;
+}
+
+/** Visitor names come from a Google Form and usernames from Telegram; both land inside
+ *  parse_mode: "HTML" text, so anything that could open a tag has to be escaped. */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** The 👤 line: a tappable link to whoever claimed the row, plus the raw ID.
+ *  https://t.me/<username> always opens the chat; tg://user?id= opens the profile only
+ *  when that account's privacy settings allow it, and degrades to plain text when not.
+ *  The <code> ID is always present so a failed link still leaves something copyable. */
+function holderLine(h: HolderInfo): string {
+  const id = `ID: <code>${h.id}</code>`;
+  if (!h.name) return `   👤 ${id}`;
+  const name = escapeHtml(h.name);
+  const link = h.username
+    ? `<a href="https://t.me/${encodeURIComponent(h.username)}">${name}</a> (@${escapeHtml(h.username)})`
+    : `<a href="tg://user?id=${h.id}">${name}</a>`;
+  return `   👤 ${link} · ${id}`;
+}
+
 export const M = {
   generalInfo: GENERAL_INFO,
   // Sent together with askName as two separate messages — the ask is the only part
@@ -213,6 +242,49 @@ export const M = {
   delRespPickerTitle: "Кого видалити з відповідальних?",
   confirmDelResp: (name: string, title: string) => `Видалити ${name} з «${title}»?`,
   delRespGone: "Цей запис уже видалено.",
+  fixCheckinUsage:
+    "Використання: /fixcheckin <ПІБ або Telegram ID>\nНаприклад: /fixcheckin Петренко Іван",
+  fixCheckinNotFound:
+    "Нікого не знайдено. Спробуйте частину прізвища або Telegram ID людини.",
+  fixCheckinFound: (n: number) => `📋 Знайдено ${n}:`,
+  fixCheckinRow: (o: {
+    n?: number;
+    name: string;
+    team: string;
+    room: string;
+    checkedIn: string;
+    doctorDone: boolean;
+    holder: HolderInfo | null;
+  }): string => {
+    const lines = [`${o.n ? `${o.n}. ` : ""}${escapeHtml(o.name)}`];
+    const where = [o.team && `Команда ${o.team}`, o.room && `Кімната ${o.room}`]
+      .filter(Boolean)
+      .join(" · ");
+    if (where) lines.push(`   ${escapeHtml(where)}`);
+    if (o.holder) {
+      lines.push(`   ✅ Відмічений ${escapeHtml(o.checkedIn)}`);
+      lines.push(holderLine(o.holder));
+    } else {
+      lines.push("   ⬜ Не відмічений");
+    }
+    if (o.doctorDone) lines.push("   🩺 Медогляд пройдено");
+    return lines.join("\n");
+  },
+  // Button labels ride in an inline keyboard, so long ПІБ values are truncated rather
+  // than wrapped into an unreadable row.
+  fixCheckinBtn: (name: string) =>
+    `♻️ Скасувати чек-ін: ${name.length > 24 ? `${name.slice(0, 23)}…` : name}`,
+  fixCheckinConfirm: (block: string) => `${block}\n\nСкасувати чек-ін цієї людини?`,
+  fixCheckinAlreadyFree: "Цей рядок уже вільний — чек-ін скасовано раніше.",
+  fixCheckinDone: (name: string, id: string, notified: boolean) =>
+    `Чек-ін скасовано ✅\n${escapeHtml(name)} · ID: <code>${id}</code>\n` +
+    (notified
+      ? "Людину повідомлено — вона може відмітитись заново."
+      : "⚠️ Не вдалося повідомити цю людину (можливо, заблокувала бота). Скажіть їй натиснути /start."),
+  fixCheckinCancelled: "Дію скасовано.",
+  fixCheckinReleasedDm:
+    "Ваш чек-ін було скасовано адміністратором — схоже, було обрано чуже ім'я.\n\n" +
+    "Натисніть /start і вкажіть своє прізвище та ім'я, щоб відмітитись заново.",
 
   // Superadmin commands
   notSuperAdmin: "Ця команда доступна лише суперадміну.",
