@@ -53,13 +53,10 @@ All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 
 - **`RESPONSES_TAB`** (default: `Form Responses 1`) — Google Form responses; bot adds `Checked in` and `Telegram ID` columns to the right. Also reads `Команда` (team ID), `Кімната` (room number) and `Особливі потреби` (allergies/medical notes) columns.
 - **`MCSchedule`** — one tab, two independent blocks side by side (fetched once via `loadMCTabRows` and parsed by both loaders). Left: schedule `Date | Slot | MC IDs` (date `YYYY-MM-DD`, slot shown verbatim, MC IDs comma-separated catalog `№` values). Keep `Slot` short (e.g. `12:00-13:00`) — it is embedded in button callback data (64-byte Telegram limit). Right: catalog `№ | Назва | Відповідальний | Місце проведення | Подарунки | Кількість учасників` (extra columns like `посилання на мапу` are ignored). The catalog header row is detected by `Місце проведення`; the title column falls back to `№`+1 because `E1:F1` are merged in the sheet (so `Назва` may be unreadable via the API). `№` like `1.` → ID `1`; capacity `без обмежень`/blank = unlimited; non-numeric-`№` rows are skipped.
-- **`EventRegs`** — retired. Registrations live in MongoDB (`registrations` collection);
-  this tab is no longer read or written. Left in place so pre-Mongo rows stay readable.
 - **`MCResponsible`** — `MC ID | Name | Telegram ID | Added at` (bot-managed via `/addresp` or bulk-imported via `/syncresp`, which reads the catalog's `Відповідальний` column and splits multi-name cells on "і"/"й"/"та"/comma; linked by the person running `/responsible <ПІБ>`, not by typing a name at check-in). Removed via `/delresp`'s button picker, not by typed name.
 - **`Videos`** — `ID | Team | File ID | Type` for per-team leader videos. `ID` is a permanent numeric key; `Team` is a display name that can be renamed. `Type` is `video_note` or `video`.
 - **`Admins`** — `Telegram ID | Name` (bot-managed via `/addadmin`).
 - **`Leaders`** — `Team | Name | Telegram ID | Linked at` (bot-managed via `/addleader`). The `Team` column stores the **numeric ID** matching the `Videos.ID` column.
-- **`PhishCatches`** — `Telegram ID | Caught at` — append-only click log for the phishing-awareness training exercise. Written by `/start caught` (deep link), read by `/caught`.
 
 ### Role system
 

@@ -1,6 +1,6 @@
-import { config, nowStamp, todayISO } from "./config";
+import { config, todayISO } from "./config";
 import { M } from "./messages";
-import { appendRow, getRows, headerIndex, updateCell } from "./sheets";
+import { getRows, headerIndex } from "./sheets";
 
 // The catalog and the schedule share the MCSchedule tab of the bot's spreadsheet:
 // schedule columns (Date | Slot | MC IDs) on the left, catalog columns
@@ -163,26 +163,6 @@ export function todaySlots(schedule: SlotSchedule[]): SlotSchedule[] {
   return schedule.filter((s) => s.date === today);
 }
 
-// EventRegs columns: Date | Slot | MC ID | Telegram ID | Name | Registered at | Cancelled at
-export async function loadMCRegistrations(): Promise<MCRegistration[]> {
-  const rows = await getRows(config.registrationsTab);
-  const regs: MCRegistration[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const [date, slot, mcId, telegramId, name, , cancelled] = rows[i];
-    if (!date || !slot || !mcId || !telegramId) continue;
-    regs.push({
-      rowIndex: i,
-      date: date.trim(),
-      slot: slot.trim(),
-      mcId: mcId.trim(),
-      telegramId: telegramId.trim(),
-      name: (name ?? "").trim(),
-      cancelled: (cancelled ?? "").trim() !== "",
-    });
-  }
-  return regs;
-}
-
 export function activeRegs(
   regs: MCRegistration[],
   date: string,
@@ -237,50 +217,3 @@ export function buildSlotButtons(
 }
 
 export type RegisterResult = "ok" | "full" | "already" | "slot_taken";
-
-export async function register(
-  date: string,
-  slot: string,
-  mcId: string,
-  capacity: number,
-  telegramId: number,
-  name: string,
-): Promise<RegisterResult> {
-  const regs = await loadMCRegistrations();
-  const slotMine = regs.find(
-    (r) =>
-      r.date === date &&
-      r.slot === slot &&
-      r.telegramId === String(telegramId) &&
-      !r.cancelled,
-  );
-  if (slotMine) return slotMine.mcId === mcId ? "already" : "slot_taken";
-  const active = activeRegs(regs, date, slot, mcId);
-  if (capacity > 0 && active.length >= capacity) return "full";
-  await appendRow(config.registrationsTab, [
-    date,
-    slot,
-    mcId,
-    String(telegramId),
-    name,
-    nowStamp(),
-    "",
-  ]);
-  return "ok";
-}
-
-export async function unregister(
-  date: string,
-  slot: string,
-  mcId: string,
-  telegramId: number,
-): Promise<boolean> {
-  const regs = await loadMCRegistrations();
-  const mine = activeRegs(regs, date, slot, mcId).find(
-    (r) => r.telegramId === String(telegramId),
-  );
-  if (!mine) return false;
-  // column G = "Cancelled at"
-  await updateCell(config.registrationsTab, mine.rowIndex, 6, nowStamp());
-  return true;
-}

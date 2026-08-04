@@ -40,13 +40,11 @@ export const config = {
   telegramIdHeader:     "Telegram ID",
   age: 'вік',
 
-  registrationsTab: "EventRegs",
   mcScheduleTab: "MCSchedule",
   responsibleTab: "MCResponsible",
   adminsTab: "Admins",
   leadersTab: "Leaders",
   videosTab: "Videos",
-  phishCatchesTab: "PhishCatches",
 
   defaultVideoFileId: process.env.DEFAULT_VIDEO_FILE_ID ?? "",
   timeZone: "Europe/Kyiv",
