@@ -39,7 +39,7 @@ One message listing every match (`searchByName` already caps at 5), each rendere
 1. Петренко Іван Миколайович
    Команда 3 · Кімната 12
    ✅ Відмічений 2026-08-04 09:14
-   👤 Telegram ID: 123456789
+   👤 Ivan P. (@ivanp) · ID: 123456789
    🩺 Медогляд пройдено
 
 2. Петренко Івана Миколаївна
@@ -47,8 +47,30 @@ One message listing every match (`searchByName` already caps at 5), each rendere
    ⬜ Не відмічена
 ```
 
-- Sent with `parse_mode: "HTML"`; the Telegram ID is wrapped in `<code>` so the admin can tap to copy
-  it — the whole point of showing it is diagnosing a swap by comparing IDs across two rows.
+- Sent with `parse_mode: "HTML"`. The Telegram ID is wrapped in `<code>` so the admin can tap to copy
+  it — comparing IDs across two rows is how a swap is diagnosed.
+
+### Identifying the holder
+
+A bare numeric ID does not say *who* claimed the row. The account's own Telegram identity is resolved
+at render time with `bot.api.getChat(telegramId)`: the bot has, by definition, talked to every
+checked-in account, so this works for check-ins already in Mongo with no schema change and no data
+captured at check-in time.
+
+The `👤` line is built from the result:
+
+- `username` present → `<a href="https://t.me/USERNAME">First Last</a> (@username)`. Always opens the
+  chat, so the admin can message the person who claimed the wrong row directly.
+- No username → `<a href="tg://user?id=ID">First Last</a>` — opens the profile when the account's
+  privacy settings allow, and degrades to plain text when they do not.
+- `getChat` throws (blocked bot, deleted account) → name and link are omitted.
+
+The `· ID: <code>123456789</code>` tail is always present, so there is something copyable even when
+both links fail.
+
+Calls are issued with `Promise.all` over the linked rows only (at most 5, since `searchByName` caps
+there) and each is individually `catch`-guarded — a failed lookup degrades one line, never the picker.
+The same resolved identity is reused on the confirm screen and in the result message.
 - Unlinked rows are still listed (so the admin can see the ID they are hunting is *not* there) but
   get no button.
 - One inline button per **linked** row: `♻️ Скасувати чек-ін: <name>`, callback `fixci:<rowIndex>`.
@@ -117,8 +139,9 @@ New keys (Ukrainian, alongside the existing admin block):
 fixCheckinUsage: "Вкажіть ПІБ або Telegram ID: /fixcheckin Петренко Іван",
 fixCheckinNotFound: "Нікого не знайдено. Спробуйте частину імені або Telegram ID.",
 fixCheckinFound: (n: number) => `📋 Знайдено ${n}:`,
-// one numbered block of the picker; also reused verbatim by the confirm screen
-fixCheckinRow: (n: number, v: Visitor) => string,   // HTML, <code> around the ID
+// one numbered block of the picker; also reused verbatim by the confirm screen.
+// `holder` is the resolved Telegram identity, or null when unlinked/unresolvable.
+fixCheckinRow: (n: number, v: Visitor, holder: HolderInfo | null) => string,   // HTML
 fixCheckinBtn: (name: string) => `♻️ Скасувати чек-ін: ${name}`,
 fixCheckinConfirm: (block: string) => `${block}\n\nСкасувати чек-ін цієї людини?`,
 fixCheckinAlreadyFree: "Цей рядок уже вільний — чек-ін скасовано раніше.",
@@ -132,6 +155,9 @@ fixCheckinReleasedDm: "Ваш чек-ін було скасовано адмін
 - `bot.command("fixcheckin", ...)` — admin gate, argument dispatch, picker.
 - A local `buildFixCheckinPicker(query)` helper returning `{ text, kb } | null`, mirroring
   `buildDelRespPicker`, so the command handler stays thin.
+- A local `resolveHolder(telegramId): Promise<HolderInfo | null>` wrapping `bot.api.getChat` in a
+  `try/catch`, where `HolderInfo` is `{ id: string; name: string; username?: string }`. Shared by the
+  picker, the confirm screen and the result message.
 - `bot.callbackQuery(/^fixci:(\d+)$/)` — confirm screen.
 - `bot.callbackQuery(/^fixciyes:(\d+)$/)` — release + DM + result.
 - `bot.callbackQuery(/^fixcicancel$/)` — "дію скасовано".
@@ -162,6 +188,10 @@ victim, and a release is destructive.
   correction.
 - **Dead code removal.** `checkin.ts:linkAndCheckIn` (the Sheets-writing original) is now referenced
   only from a comment. Not touched here.
+- **Storing the holder's username at check-in.** Considered as the alternative to `getChat`, and
+  rejected: it would need a schema change plus a write in `linkAndCheckInMongo`, it would still be
+  blank for everyone already checked in, and `/syncvisitors` would wipe it (see the hazard above).
+  `getChat` needs none of that and is always current.
 - **Audit log** of who released what. The admin's result message is the only record.
 
 ## Edge cases
@@ -175,6 +205,10 @@ victim, and a release is destructive.
 - Mongo unavailable → `mongoGuarded` replies «спробуйте за хвилину» instead of a 500 that Telegram
   would redeliver.
 - Non-admin runs the command → `M.notAdmin`.
+- `getChat` fails or the account has no username → the `👤` line degrades as described under
+  "Identifying the holder"; the ID and the release button are unaffected.
+- Holder's privacy settings block `tg://user?id=` → the name renders as plain text, and the admin
+  still has the copyable ID.
 
 ## Verification
 
@@ -182,7 +216,9 @@ victim, and a release is destructive.
 (`npm run dev`):
 
 1. Check in as account A under name X. Confirm account B picking X gets `M.rowTaken`.
-2. `/fixcheckin X` as an admin — the picker shows A's Telegram ID and the check-in stamp.
+2. `/fixcheckin X` as an admin — the picker shows A's Telegram ID, resolved name and the check-in
+   stamp. Tapping the `👤` line opens A's chat or profile. Repeat with an account that has no
+   username and confirm the line degrades rather than breaking the message.
 3. Confirm the release; verify A receives the DM with its keyboard removed, and that the admin's
    result message reports the DM as delivered.
 4. Account B now checks in as X successfully; account A's `/start` asks for a name again.
