@@ -23,6 +23,7 @@ const ADMIN_COMMANDS = [
   { command: "listleaders", description: "Список лідерів" },
   { command: "syncresp", description: "Синхронізувати відповідальних" },
   { command: "delresp", description: "Видалити відповідального" },
+  { command: "stats", description: "Статистика табору" },
 ];
 
 const SUPERADMIN_COMMANDS = [

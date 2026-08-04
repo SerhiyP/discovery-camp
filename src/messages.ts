@@ -197,6 +197,8 @@ export const M = {
   statsTitle: "📊 Статистика табору",
   statsVisitors: (total: number) => `Відвідувачів: ${total}`,
   statsCheckedIn: (checkedIn: number, pct: number) => `Заселено: ${checkedIn} (${pct}%)`,
+  statsNoDoctor: (count: number) => `Без огляду лікаря: ${count}`,
+  statsNoPayment: (count: number) => `Без оплати: ${count}`,
   statsRegsTitle: "Реєстрації на МК:",
   statsSlotLine: (slot: string, count: number) => `  ${slot}: ${count}`,
   statsRegsTotal: (total: number) => `Всього реєстрацій: ${total}`,

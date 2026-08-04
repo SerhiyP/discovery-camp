@@ -860,6 +860,8 @@ function formatStats(visitors: Visitor[], regs: MongoRegistration[]): string[] {
   const total = visitors.length;
   const checkedIn = visitors.filter((v) => v.checkedIn !== "").length;
   const pct = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
+  const noDoctor = visitors.filter((v) => !v.doctorStatus).length;
+  const noPayment = visitors.filter((v) => !v.paymentStatus).length;
 
   const active = regs.filter((r) => r.active);
   const byDate = new Map<string, Map<string, number>>();
@@ -875,6 +877,8 @@ function formatStats(visitors: Visitor[], regs: MongoRegistration[]): string[] {
     "",
     M.statsVisitors(total),
     M.statsCheckedIn(checkedIn, pct),
+    M.statsNoDoctor(noDoctor),
+    M.statsNoPayment(noPayment),
     "",
   ];
   if (dates.length === 0) {
