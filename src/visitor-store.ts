@@ -154,3 +154,34 @@ export async function linkAndCheckInMongo(
   );
   return { ok: true, visitor: { ...visitor, telegramId: String(telegramId), checkedIn } };
 }
+
+/** Single-row read by sheet rowIndex — what the /fixcheckin confirm screen needs. Avoids
+ *  pulling the whole mirror through getVisitorsMongo just to re-render one row. */
+export async function findVisitorByRowMongo(rowIndex: number): Promise<Visitor | undefined> {
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  const doc = await col.findOne({ _id: rowIndex as never });
+  return doc ? toVisitor(doc as never) : undefined;
+}
+
+/**
+ * Releases a wrongly-claimed row so the right person can check in — the exact inverse of
+ * linkAndCheckInMongo. Mongo only: the sheet's Checked in / Telegram ID columns have not
+ * been written since 2026-08-03 and stay untouched here too.
+ *
+ * doctorStatus is deliberately kept. The motivating case is a swap — two people who picked
+ * each other's rows — where both really were examined by the doctor, so both rows carry a
+ * mark a real exam produced. See docs/superpowers/specs/2026-08-04-fix-checkin-design.md.
+ *
+ * Returns the pre-release visitor, because the caller needs the old telegramId to notify
+ * that account. The clear is a single guarded findOneAndUpdate rather than read-then-write,
+ * so two admins racing on the same row produce exactly one release and one notification.
+ */
+export async function releaseCheckInMongo(rowIndex: number): Promise<Visitor | undefined> {
+  const col = (await db()).collection(COLLECTIONS.visitors);
+  const before = await col.findOneAndUpdate(
+    { _id: rowIndex as never, telegramId: { $type: "string", $ne: "" } },
+    { $set: { telegramId: "", checkedIn: "" } },
+    { returnDocument: "before" },
+  );
+  return before ? toVisitor(before as never) : undefined;
+}
