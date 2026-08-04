@@ -115,7 +115,7 @@ Deliberately not touched:
 | Thing | Why |
 |---|---|
 | `doctorStatus` | Kept — see "Design notes". |
-| MC registrations | Keyed by `telegramId` with names resolved at read time (`src/mc-store.ts:126`), so they follow the person, not the row, and re-resolve correctly once that person checks in under their own name. |
+| MC registrations | Keyed by `telegramId` with names resolved at read time (`src/mc-store.ts:126`), so they follow the person, not the row, and re-resolve correctly once that person checks in under their own name. Between the release and that re-check-in there is no row to resolve the name from, so the person appears as a bare Telegram ID in the responsible person's attendee list and in `/caught` while still holding their seat — and if they never check in again, that seat stays taken by a nameless ID. |
 | `mcSeats` counters | No registration is cancelled, so no counter moves. |
 | Leaders / MCResponsible rows | Separate tables with their own link commands (`/leader`, `/responsible`). |
 
