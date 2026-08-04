@@ -63,7 +63,8 @@ All state lives in one spreadsheet (`SHEET_ID`). Tabs:
 Four tiers, checked in order:
 
 1. **Superadmin** — Telegram IDs in `ADMIN_IDS` env var. Full access.
-2. **Admin** — rows in the `Admins` sheet. Can manage leaders and broadcast.
+2. **Admin** — rows in the `Admins` sheet. Can manage leaders, broadcast, and correct a
+   wrongly-claimed check-in via `/fixcheckin` (typed-only, takes an argument, so no menu entry).
 3. **Leader** — rows in the `Leaders` sheet. Can view their team roster (name + age + room + special needs) and their team's masterclass registrations for today, notify team, rename team, set team video.
 4. **Responsible** — rows in the `MCResponsible` sheet. Can view and message their masterclass attendees, and reveal same-day phishing-training catches via `/caught` (typed-only, no menu entry — same precedent as `/notifymc`). Independent of the leader role; a person can hold both, but each role must be claimed through its own command (`/leader`, `/responsible`) — the bot never offers them together.
 
@@ -112,3 +113,12 @@ The default Telegram command menu (`Меню` button) is cleared for regular use
 - **«Особливі потреби» has two audiences with opposite filtering rules** — the doctor's QR-scan confirmation shows the raw cell always (a missing line would be ambiguous between "nothing to report" and "the bot dropped it"), while the leader roster shows it only when `isMeaningfulNeed()` (`checkin.ts`) rejects it as filler, since a column of `⚠️ Ні` trains leaders to skip the warnings that matter. The filler list matches whole normalized values, never substrings.
 - **Leader team views are read-only and button-only** — `👥 Моя команда` and `🎨 МК команди` have no slash-command equivalent and no command-menu entry, because neither takes an argument. The team↔visitor join is `Leaders.Team` against the visitor's `Номер команди` cell (trimmed, case-insensitive); the member↔registration join is the registration's `telegramId` in MongoDB, so a member with no active registration for a given slot (including one who never checked in) reads `без реєстрації`.
 - **Reply keyboards are client-side and go stale on role loss** — deleting a row from `Leaders`/`MCResponsible` does not remove the buttons from that person's Telegram; the client keeps the last markup the bot sent. Every role-gated button therefore re-checks the sheet and, when the role is gone, answers via `replyRoleRevoked` (`src/bot.ts`), which attaches the caller's current keyboard (or `remove_keyboard`) so the stale buttons vanish on first press. Any new role-gated button must do the same. The reverse also holds — a role *granted* outside the `/leader`/`/responsible` link flow (typed straight into the sheet, or claimed before reply keyboards existed) sends no markup either, so `/start`, `/help` and a repeat `/leader`/`/responsible` all attach the caller's current keyboard. Telling an existing leader to press `/start` is the supported way to hand out newly added buttons; there is no proactive push.
+- **A check-in link can be released, never transferred** — `/fixcheckin <ПІБ | Telegram ID>`
+  (`src/bot.ts`) clears `telegramId`/`checkedIn` on one mirror row via `releaseCheckInMongo`
+  (`src/visitor-store.ts`), after which both people simply check in again through the normal flow;
+  there is no second check-in path to keep correct. `doctorStatus` is deliberately kept: the case
+  this exists for is a *swap*, where both people really were examined. The account that claimed the
+  row is identified at render time with `bot.api.getChat` — the bot has talked to every checked-in
+  account by definition, so this works retroactively and stores nothing new. MC registrations are
+  keyed by `telegramId` with names resolved at read time, so they follow the person and re-resolve
+  once they check in correctly; nothing about them needs touching on release.
