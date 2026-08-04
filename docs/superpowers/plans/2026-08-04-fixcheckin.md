@@ -276,25 +276,8 @@ In `src/bot.ts`, change the messages import (line 25) to:
 import { M, roleCapabilitiesText, type HolderInfo } from "./messages";
 ```
 
-and add `findVisitorByRowMongo` and `releaseCheckInMongo` to the `./visitor-store` import block
-(lines 60–67), keeping it alphabetical:
-
-```ts
-import {
-  findVisitorByRowMongo,
-  findVisitorByTelegramIdMongo,
-  getVisitorsMongo,
-  linkAndCheckInMongo,
-  markDoctorExamMongo,
-  refreshPaymentStatusMongo,
-  releaseCheckInMongo,
-  syncVisitorsFromSheets,
-} from "./visitor-store";
-```
-
-Both new imports are used in Task 4; adding them now keeps the import block edited once.
-`npm run typecheck` does not flag unused imports in this project's config, but if the implementer's
-editor does, ignore it until Task 4 lands.
+The `./visitor-store` import block (lines 60–67) is **not** touched in this task — the two functions
+from Task 1 are first used in Task 4, and are imported there.
 
 - [ ] **Step 2: Add `resolveHolder`, the picker builder and the command**
 
@@ -435,7 +418,25 @@ git commit -m "feat(checkin): add /fixcheckin lookup and picker"
   `M.fixCheckinReleasedDm` (Task 2), `safeAnswer`, `mongoGuarded`, `InlineKeyboard`.
 - Produces: three callback handlers — `fixci:<rowIndex>`, `fixciyes:<rowIndex>`, `fixcicancel`.
 
-- [ ] **Step 1: Add the three handlers**
+- [ ] **Step 1: Extend the `./visitor-store` import block**
+
+In `src/bot.ts`, add the two Task 1 functions to the existing `./visitor-store` import (lines 60–67),
+keeping it alphabetical:
+
+```ts
+import {
+  findVisitorByRowMongo,
+  findVisitorByTelegramIdMongo,
+  getVisitorsMongo,
+  linkAndCheckInMongo,
+  markDoctorExamMongo,
+  refreshPaymentStatusMongo,
+  releaseCheckInMongo,
+  syncVisitorsFromSheets,
+} from "./visitor-store";
+```
+
+- [ ] **Step 2: Add the three handlers**
 
 Insert after the `bot.command("fixcheckin", …)` block:
 
@@ -507,12 +508,12 @@ Note: `editMessageText` called without `reply_markup` removes the inline keyboar
 buttons disappear once the release resolves. That is intended — a second tap on a stale keyboard is
 what `fixCheckinAlreadyFree` exists for, but not offering the buttons is better than relying on it.
 
-- [ ] **Step 2: Type-check**
+- [ ] **Step 3: Type-check**
 
 Run: `npm run typecheck`
 Expected: no errors.
 
-- [ ] **Step 3: Manual check of the release path**
+- [ ] **Step 4: Manual check of the release path**
 
 Run: `npm run dev`, with two Telegram accounts (A = participant, B = admin) against the dev bot.
 
@@ -533,7 +534,7 @@ Run: `npm run dev`, with two Telegram accounts (A = participant, B = admin) agai
 8. Re-open the confirm screen for some row, release it from a second admin session, then tap
    `✅ Так, скасувати` on the first, stale screen. Expected: «Цей рядок уже вільний…», no second DM.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/bot.ts
