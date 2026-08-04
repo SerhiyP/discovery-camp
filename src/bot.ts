@@ -22,7 +22,7 @@ import {
   topicLines,
 } from "./masterclasses";
 import { loadTodaySchedule } from "./schedule";
-import { M, roleCapabilitiesText } from "./messages";
+import { M, roleCapabilitiesText, type HolderInfo } from "./messages";
 import { addAdmin, findAdminByTelegramId, isAdmin, loadAdmins, removeAdmin } from "./admins";
 import {
   addLeader,
@@ -839,6 +839,87 @@ bot.callbackQuery("delrespcancel", async (ctx) => {
   if (!picker) return ctx.editMessageText(M.noResponsiblePersons);
   return ctx.editMessageText(picker.text, { reply_markup: picker.kb });
 });
+
+// --- /fixcheckin: release a wrongly-claimed check-in ---
+
+/** A pure-digit argument is a Telegram ID, not a name — Ukrainian ПІБ never is. Five
+ *  digits is below any real Telegram ID and safely above any team or room number. */
+const FIXCHECKIN_ID_RE = /^\d{5,}$/;
+
+/** Telegram identity of an account we only know by ID. The bot has, by definition, talked
+ *  to every checked-in account, so getChat resolves name and @username for check-ins that
+ *  are already in Mongo — nothing has to be captured at check-in time. A failure (deleted
+ *  account, bot blocked) degrades to the bare ID; it must never break the picker, whose
+ *  actual job is releasing the row. */
+async function resolveHolder(telegramId: string): Promise<HolderInfo> {
+  try {
+    const chat = await bot.api.getChat(Number(telegramId));
+    if (chat.type !== "private") return { id: telegramId, name: "" };
+    const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ");
+    return { id: telegramId, name, username: chat.username };
+  } catch (err) {
+    console.error("fixcheckin: getChat failed", telegramId, err);
+    return { id: telegramId, name: "" };
+  }
+}
+
+/** One rendered block for a row, with its holder resolved. Shared by the picker and the
+ *  confirm screen so both always show the same detail. */
+async function fixCheckinBlock(v: Visitor, n?: number): Promise<string> {
+  return M.fixCheckinRow({
+    n,
+    name: v.name,
+    team: v.team,
+    room: v.room,
+    checkedIn: v.checkedIn,
+    doctorDone: Boolean(v.doctorStatus),
+    holder: v.telegramId ? await resolveHolder(v.telegramId) : null,
+  });
+}
+
+/** Rows matching the query, each with the Telegram identity of whoever claimed it.
+ *  Lookups go through the Mongo mirror only — the Visitors tab shares the camp's 60
+ *  reads/minute quota, and Mongo is authoritative for the link anyway. */
+async function buildFixCheckinPicker(
+  query: string,
+): Promise<{ text: string; kb: InlineKeyboard } | null> {
+  // By Telegram ID: the other end of a swap, when the admin has the person in front of
+  // them but not the name they mistakenly claimed.
+  const matches = FIXCHECKIN_ID_RE.test(query)
+    ? [await findVisitorByTelegramIdMongo(Number(query))].filter((v): v is Visitor => !!v)
+    : searchByName(await getVisitorsMongo(), query);
+  if (matches.length === 0) return null;
+
+  // searchByName caps at 5, so this is at most 5 concurrent getChat calls, each already
+  // catch-guarded inside resolveHolder — one failed lookup degrades one line, never the
+  // whole message.
+  const blocks = await Promise.all(matches.map((v, i) => fixCheckinBlock(v, i + 1)));
+
+  const kb = new InlineKeyboard();
+  // Unclaimed rows are still listed — seeing that the ID is *not* there is half the
+  // diagnosis — but only a claimed row has anything to release.
+  for (const v of matches) {
+    if (!v.telegramId) continue;
+    kb.text(M.fixCheckinBtn(v.name), `fixci:${v.rowIndex}`).row();
+  }
+
+  return {
+    text: `${M.fixCheckinFound(matches.length)}\n\n${blocks.join("\n\n")}`,
+    kb,
+  };
+}
+
+bot.command("fixcheckin", mongoGuarded(async (ctx) => {
+  const { admins } = await loadAdmins();
+  if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
+
+  const query = ctx.match.trim();
+  if (!query) return ctx.reply(M.fixCheckinUsage);
+
+  const picker = await buildFixCheckinPicker(query);
+  if (!picker) return ctx.reply(M.fixCheckinNotFound);
+  return ctx.reply(picker.text, { parse_mode: "HTML", reply_markup: picker.kb });
+}));
 
 async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promise<void> {
   let buf: string[] = [];
