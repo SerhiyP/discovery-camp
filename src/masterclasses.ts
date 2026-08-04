@@ -228,8 +228,8 @@ export function buildSlotButtons(
     const cbData = `${mine ? "mcunreg" : "mcreg"}:${s.date}:${s.slot}:${mc.id}`;
     // Telegram rejects the whole message if any button's callback data exceeds 64 bytes
     if (Buffer.byteLength(cbData) > 64) continue;
-    const label = `${mine ? "❌" : "📝"} ${mc.title}${
-      mc.capacity > 0 ? ` — ${taken.length}/${mc.capacity}` : ""
+    const label = `${mine ? "❌" : "📝"} ${mc.title} — ${taken.length}/${
+      mc.capacity > 0 ? mc.capacity : "∞"
     }`;
     buttons.push({ label, cbData });
   }
