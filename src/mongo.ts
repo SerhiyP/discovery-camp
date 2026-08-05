@@ -10,6 +10,7 @@ export const COLLECTIONS = {
   mcSeats: "mcSeats",
   campSchedule: "campSchedule",
   phishCatches: "phishCatches",
+  phishScans: "phishScans",
 } as const;
 
 export function mongoEnabled(): boolean {
