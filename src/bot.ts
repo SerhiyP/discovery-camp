@@ -44,7 +44,7 @@ import {
   removeResponsibleByRow,
   searchResponsibleByName,
 } from "./responsible";
-import { loadCatches, logCatch, type PhishCatch } from "./phishing";
+import { loadCatches, loadScans, logCatch, type PhishCatch, type PhishScan } from "./phishing";
 import {
   asMCRegistrations,
   ensureIndexes,
@@ -1043,30 +1043,54 @@ async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promis
   if (buf.length > 0) await ctx.reply(buf.join("\n"));
 }
 
-function formatPhishStats(catches: PhishCatch[]): string[] {
+function formatPhishStats(catches: PhishCatch[], scans: PhishScan[]): string[] {
+  const lines = [M.statsPhishTitle];
+
+  // Telegram deep-link channel — deduped by telegramId (who fell for it).
   const earliestByTelegramId = new Map<string, string>();
   for (const c of catches) {
     const existing = earliestByTelegramId.get(c.telegramId);
     if (!existing || c.caughtAt < existing) earliestByTelegramId.set(c.telegramId, c.caughtAt);
   }
-  const lines = [M.statsPhishTitle];
   if (earliestByTelegramId.size === 0) {
     lines.push(M.statsPhishNoCatches);
-    return lines;
+  } else {
+    lines.push(M.statsPhishCaught(earliestByTelegramId.size, catches.length), "");
+    const byDate = new Map<string, number>();
+    for (const caughtAt of earliestByTelegramId.values()) {
+      const date = caughtAt.slice(0, 10);
+      byDate.set(date, (byDate.get(date) ?? 0) + 1);
+    }
+    for (const date of [...byDate.keys()].sort()) {
+      lines.push(M.statsPhishDayLine(date, byDate.get(date)!));
+    }
   }
-  lines.push(M.statsPhishCaught(earliestByTelegramId.size, catches.length), "");
-  const byDate = new Map<string, number>();
-  for (const caughtAt of earliestByTelegramId.values()) {
-    const date = caughtAt.slice(0, 10);
-    byDate.set(date, (byDate.get(date) ?? 0) + 1);
+
+  // QR direct-HTTP channel — anonymous, one doc per scan, so no dedup.
+  lines.push("");
+  if (scans.length === 0) {
+    lines.push(M.statsScansNone);
+  } else {
+    lines.push(M.statsScans(scans.length));
+    const byDate = new Map<string, number>();
+    for (const s of scans) {
+      const date = s.scannedAt.slice(0, 10);
+      byDate.set(date, (byDate.get(date) ?? 0) + 1);
+    }
+    for (const date of [...byDate.keys()].sort()) {
+      lines.push(M.statsPhishDayLine(date, byDate.get(date)!));
+    }
   }
-  for (const date of [...byDate.keys()].sort()) {
-    lines.push(M.statsPhishDayLine(date, byDate.get(date)!));
-  }
+
   return lines;
 }
 
-function formatStats(visitors: Visitor[], regs: MongoRegistration[], catches: PhishCatch[]): string[] {
+function formatStats(
+  visitors: Visitor[],
+  regs: MongoRegistration[],
+  catches: PhishCatch[],
+  scans: PhishScan[]
+): string[] {
   const total = visitors.length;
   const checkedIn = visitors.filter((v) => v.checkedIn !== "").length;
   const pct = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
@@ -1103,7 +1127,7 @@ function formatStats(visitors: Visitor[], regs: MongoRegistration[], catches: Ph
     }
     lines.push("", M.statsRegsTotal(active.length));
   }
-  lines.push("", ...formatPhishStats(catches));
+  lines.push("", ...formatPhishStats(catches, scans));
   return lines;
 }
 
@@ -1173,12 +1197,13 @@ bot.command("stats", async (ctx) => {
   const { admins } = await loadAdmins();
   if (!isAdmin(ctx.from?.id, admins)) return ctx.reply(M.notAdmin);
   try {
-    const [visitors, regs, catches] = await Promise.all([
+    const [visitors, regs, catches, scans] = await Promise.all([
       getVisitorsMongo(),
       getRegistrations(),
       loadCatches(),
+      loadScans(),
     ]);
-    return replyChunked(ctx, formatStats(visitors, regs, catches));
+    return replyChunked(ctx, formatStats(visitors, regs, catches, scans));
   } catch (err) {
     console.error("stats failed", err);
     return ctx.reply(M.statsFailed);

@@ -237,6 +237,8 @@ export const M = {
     `Спіймано: ${unique} осіб (${events} спрацювань)`,
   statsPhishNoCatches: "Ще ніхто не попався.",
   statsPhishDayLine: (date: string, count: number) => `  ${date}: ${count}`,
+  statsScans: (scans: number) => `QR-сканувань: ${scans}`,
+  statsScansNone: "QR-код ще ніхто не сканував.",
   tryAgainLater: "Тимчасова помилка. Спробуйте ще раз за хвилину.",
   noResponsiblePersons: "Відповідальних ще немає.",
   delRespPickerTitle: "Кого видалити з відповідальних?",
@@ -345,6 +347,8 @@ export const M = {
 
   // Phishing awareness
   phishCaught: "🎣 Ви попались! Це був навчальний фішинг — обговоримо це на майстер-класі по захисту телефона.",
+  phishCaughtQr:
+    "🎣 Ви попались! Ви відсканували фішинговий QR-код. Ніколи не скануйте незнайомі QR-коди — вони можуть вести на шахрайські сайти. Обговоримо це на майстер-класі по захисту телефона.",
   caughtHeader: (title: string, slot: string) => `Спіймані на «${title}» (${slot}):`,
   noCatches: "— поки ніхто не попався",
   caughtChoose: "Результати якого майстер-класу показати?",

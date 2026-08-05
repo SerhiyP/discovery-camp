@@ -19,3 +19,22 @@ export async function loadCatches(): Promise<PhishCatch[]> {
     caughtAt: String(d.caughtAt ?? ""),
   }));
 }
+
+// --- QR-code phishing (anonymous scan count) ---
+//
+// The QR poster encodes a plain https URL that opens api/phish directly in the
+// browser — no Telegram hop, so there is no telegramId and no "who". We only
+// count scans. One doc per scan keeps the per-day breakdown trivial.
+
+export interface PhishScan {
+  scannedAt: string;
+}
+
+export async function logScan(): Promise<void> {
+  await (await db()).collection(COLLECTIONS.phishScans).insertOne({ scannedAt: nowStamp() });
+}
+
+export async function loadScans(): Promise<PhishScan[]> {
+  const docs = await (await db()).collection(COLLECTIONS.phishScans).find({}).toArray();
+  return docs.map((d) => ({ scannedAt: String(d.scannedAt ?? "") }));
+}
