@@ -337,6 +337,8 @@ export const M = {
   mcAttendeesHeader: (title: string, slot: string, place: string, taken: number, capacity: number) =>
     `🎨 ${title} — ${slot}, ${place} (${taken}${capacity > 0 ? `/${capacity}` : ""}):`,
   mcNoAttendees: "— поки нікого",
+  mcAttendeeLine: (name: string, age: string, team: string) =>
+    `• ${name}${age ? ` — ${age} р.` : ""}${team ? ` · 👥 ${team}` : ""}`,
   mcAttendeeUnknown: (id: string) => `невідомий учасник (ID ${id})`,
   mcNotifyNoText: "Використання: /notifymc <текст повідомлення>",
   mcNotifyHint: "Напишіть команду з текстом:\n/notifymc <ваше повідомлення>",

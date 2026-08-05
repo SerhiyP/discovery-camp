@@ -1434,16 +1434,16 @@ async function handleMcAttendees(ctx: Context) {
   if (occ.length === 0) return ctx.reply(M.noMyMcToday);
   const [regsRaw, visitors] = await Promise.all([getRegistrations(), getVisitorsMongo()]);
   const regs = asMCRegistrations(regsRaw);
-  const nameById = new Map(
-    visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v.name]),
-  );
+  const byId = new Map(visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v]));
   const lines: string[] = [];
   for (const o of occ) {
     const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
     lines.push(M.mcAttendeesHeader(o.mc.title, o.slot, o.mc.place, taken.length, o.mc.capacity));
     if (taken.length === 0) lines.push(M.mcNoAttendees);
-    for (const r of taken)
-      lines.push(`• ${nameById.get(r.telegramId) ?? M.mcAttendeeUnknown(r.telegramId)}`);
+    for (const r of taken) {
+      const v = byId.get(r.telegramId);
+      lines.push(v ? M.mcAttendeeLine(v.name, v.age, v.team) : M.mcAttendeeUnknown(r.telegramId));
+    }
     lines.push("");
   }
   return ctx.reply(lines.join("\n").trimEnd());
