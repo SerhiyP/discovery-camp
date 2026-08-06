@@ -68,6 +68,7 @@ export interface MongoRegistration {
   mcId: string;
   telegramId: string;
   active: boolean;
+  registeredAt: string;
 }
 
 /** Creates the unique partial index that makes "one active registration per slot" a
@@ -118,6 +119,7 @@ export async function getRegistrations(): Promise<MongoRegistration[]> {
     mcId: String(d.mcId ?? ""),
     telegramId: String(d.telegramId ?? ""),
     active: d.active === true,
+    registeredAt: String(d.registeredAt ?? ""),
   }));
 }
 
@@ -134,6 +136,7 @@ export function asMCRegistrations(regs: MongoRegistration[]): MCRegistration[] {
     telegramId: r.telegramId,
     name: "",
     cancelled: !r.active,
+    registeredAt: r.registeredAt,
   }));
 }
 

@@ -65,3 +65,9 @@ export function nowStamp(): string {
     timeStyle: "short",
   }).format(new Date());
 }
+
+/** The "14:05" tail of a nowStamp(), for views already scoped to a single day.
+ *  Returns "" for a blank or unrecognized stamp rather than a slice of garbage. */
+export function stampTime(stamp: string): string {
+  return /(\d{1,2}:\d{2})\s*$/.exec(stamp)?.[1] ?? "";
+}

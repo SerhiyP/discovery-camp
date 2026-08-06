@@ -29,6 +29,7 @@ export interface MCRegistration {
   telegramId: string;
   name: string;
   cancelled: boolean;
+  registeredAt: string;
 }
 
 /** Raw rows of the MCSchedule tab — pass them to loadMasterclasses/loadMCSchedule

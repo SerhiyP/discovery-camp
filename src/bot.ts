@@ -1,7 +1,7 @@
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import type { MessageEntity } from "grammy/types";
 import QRCode from "qrcode";
-import { config, todayISO } from "./config";
+import { config, stampTime, todayISO } from "./config";
 import {
   isMeaningfulNeed,
   loadVisitors,
@@ -1027,20 +1027,25 @@ bot.callbackQuery("fixcicancel", async (ctx) => {
   return tryTelegram("editMessageText", () => ctx.editMessageText(M.fixCheckinCancelled));
 });
 
-async function replyChunked(ctx: Context, lines: string[], limit = 3500): Promise<void> {
+async function replyChunked(
+  ctx: Context,
+  lines: string[],
+  limit = 3500,
+  other?: Parameters<Context["reply"]>[1],
+): Promise<void> {
   let buf: string[] = [];
   let len = 0;
   for (const line of lines) {
     const lineLen = line.length + 1;
     if (len + lineLen > limit && buf.length > 0) {
-      await ctx.reply(buf.join("\n"));
+      await ctx.reply(buf.join("\n"), other);
       buf = [];
       len = 0;
     }
     buf.push(line);
     len += lineLen;
   }
-  if (buf.length > 0) await ctx.reply(buf.join("\n"));
+  if (buf.length > 0) await ctx.reply(buf.join("\n"), other);
 }
 
 function formatPhishStats(catches: PhishCatch[], scans: PhishScan[]): string[] {
@@ -1437,16 +1442,34 @@ async function handleMcAttendees(ctx: Context) {
   const byId = new Map(visitors.filter((v) => v.telegramId).map((v) => [v.telegramId, v]));
   const lines: string[] = [];
   for (const o of occ) {
-    const taken = activeRegs(regs, o.date, o.slot, o.mc.id);
+    // Registration order, earliest first — the responsible person reads the tail to see
+    // who just joined. A stamp-less row sorts after every real stamp (￿) rather than
+    // before them, so it lands at the end of the list instead of heading it.
+    const LAST = "￿";
+    const taken = activeRegs(regs, o.date, o.slot, o.mc.id)
+      .slice()
+      .sort((a, b) => (a.registeredAt || LAST).localeCompare(b.registeredAt || LAST));
     lines.push(M.mcAttendeesHeader(o.mc.title, o.slot, o.mc.place, taken.length, o.mc.capacity));
     if (taken.length === 0) lines.push(M.mcNoAttendees);
     for (const r of taken) {
       const v = byId.get(r.telegramId);
-      lines.push(v ? M.mcAttendeeLine(v.name, v.age, v.team) : M.mcAttendeeUnknown(r.telegramId));
+      lines.push(
+        M.mcAttendeeLine(
+          r.telegramId,
+          v?.name ?? "",
+          v?.age ?? "",
+          v?.team ?? "",
+          stampTime(r.registeredAt),
+        ),
+      );
     }
     lines.push("");
   }
-  return ctx.reply(lines.join("\n").trimEnd());
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  // Chunked, not a single reply: the tg:// markup adds ~40 characters per attendee, and a
+  // full masterclass across several slots can now cross Telegram's 4096-char limit — which
+  // would be a 500 and a redelivered update rather than a truncated message.
+  return replyChunked(ctx, lines, 3500, { parse_mode: "HTML" });
 }
 
 /** Entities fully contained in [offset, offset+length) of the original text,

@@ -334,11 +334,25 @@ export const M = {
   // Responsible tools
   notResponsible: "Ця функція доступна лише відповідальним за майстер-класи.",
   noMyMcToday: "Сьогодні ваших майстер-класів немає.",
+  // The attendee list is parse_mode: "HTML" so each name can carry a tg:// link — every
+  // field below reaches it from a Google Sheet and has to be escaped on the way in.
   mcAttendeesHeader: (title: string, slot: string, place: string, taken: number, capacity: number) =>
-    `🎨 ${title} — ${slot}, ${place} (${taken}${capacity > 0 ? `/${capacity}` : ""}):`,
+    `🎨 ${escapeHtml(title)} — ${escapeHtml(slot)}, ${escapeHtml(place)}` +
+    ` (${taken}${capacity > 0 ? `/${capacity}` : ""}):`,
   mcNoAttendees: "— поки нікого",
-  mcAttendeeLine: (name: string, age: string, team: string) =>
-    `• ${name}${age ? ` — ${age} р.` : ""}${team ? ` · 👥 ${team}` : ""}`,
+  /** One attendee, tappable. tg://user?id= opens the profile — from which «Написати»
+   *  starts the chat — and Telegram guarantees it resolves for anyone who has contacted
+   *  the bot, which every attendee has by virtue of registering through it. An account
+   *  whose privacy settings refuse degrades to plain text, so the visitor who is missing
+   *  from the mirror keeps a <code> ID that stays copyable either way. */
+  mcAttendeeLine: (id: string, name: string, age: string, team: string, time: string) => {
+    const label = name ? escapeHtml(name) : "невідомий учасник";
+    const details = name
+      ? `${age ? ` — ${escapeHtml(age)} р.` : ""}${team ? ` · 👥 ${escapeHtml(team)}` : ""}`
+      : ` (ID <code>${id}</code>)`;
+    return `• <a href="tg://user?id=${id}">${label}</a>${details}${time ? ` · 🕐 ${time}` : ""}`;
+  },
+  /** Plain-text stand-in for a name, for the non-HTML /caught list. */
   mcAttendeeUnknown: (id: string) => `невідомий учасник (ID ${id})`,
   mcNotifyNoText: "Використання: /notifymc <текст повідомлення>",
   mcNotifyHint: "Напишіть команду з текстом:\n/notifymc <ваше повідомлення>",
