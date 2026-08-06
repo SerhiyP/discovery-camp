@@ -141,6 +141,30 @@ export const M = {
     "🎨 Як відповідальний за майстер-клас:\n" +
     "👥 Учасники МК — список учасників вашого майстер-класу\n" +
     "📣 Сповістити учасників МК — надіслати їм повідомлення",
+  // Admin/superadmin blocks list *commands*, not buttons: these roles have no reply
+  // keyboard of their own, and the Telegram command menu only carries the zero-arg
+  // subset (see commands.ts), so /help is the only place the arg-taking ones are
+  // written down. Keep in sync with the handlers in bot.ts.
+  capabilitiesAdmin:
+    "🛠 Як адміністратор:\n" +
+    "/stats — статистика табору\n" +
+    "/broadcast <текст> — розсилка всім відміченим\n" +
+    "/fixcheckin <ПІБ або Telegram ID> — скасувати чужий чек-ін\n" +
+    "/addleader <ID команди> <ПІБ> — додати лідера\n" +
+    "/removeleader <ID команди> <ПІБ> — видалити лідера\n" +
+    "/listleaders — список лідерів\n" +
+    "/addresp <ID МК> <ПІБ> — додати відповідального\n" +
+    "/delresp — видалити відповідального\n" +
+    "/syncresp — імпортувати відповідальних із каталогу МК\n" +
+    "/syncmc — оновити каталог, розклад і теми МК\n" +
+    "/syncvisitors — оновити список учасників\n" +
+    "/syncschedule — оновити розклад табору\n" +
+    "/syncmenus — оновити меню команд у Telegram",
+  capabilitiesSuperAdmin:
+    "👑 Як суперадмін:\n" +
+    "/addadmin <TelegramID> <Ім'я> — додати адміністратора\n" +
+    "/removeadmin <TelegramID> — видалити адміністратора\n" +
+    "/listadmins — список адміністраторів",
 
   // /myid
   yourId: (id: number) => `Ваш Telegram ID: <code>${id}</code>`,
@@ -372,10 +396,19 @@ export const M = {
 
 /** Composes the post-registration / `/help` capability message from a person's full
  *  current role set — mirrors how `roleKeyboard()` composes the reply keyboard. Takes
- *  the same shape `getUserRoles()` returns so callers can pass it through directly. */
-export function roleCapabilitiesText(roles: { isLeader?: boolean; isResponsible?: boolean }): string {
+ *  the same shape `getUserRoles()` returns so callers can pass it through directly;
+ *  the admin flags live outside that shape (they come from the Admins sheet and
+ *  ADMIN_IDS), so only /help passes them and the check-in path never does. */
+export function roleCapabilitiesText(roles: {
+  isLeader?: boolean;
+  isResponsible?: boolean;
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
+}): string {
   const parts = [M.capabilitiesBase];
   if (roles.isLeader) parts.push(M.capabilitiesLeader);
   if (roles.isResponsible) parts.push(M.capabilitiesResponsible);
+  if (roles.isAdmin || roles.isSuperAdmin) parts.push(M.capabilitiesAdmin);
+  if (roles.isSuperAdmin) parts.push(M.capabilitiesSuperAdmin);
   return parts.join("\n\n");
 }

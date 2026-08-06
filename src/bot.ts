@@ -225,8 +225,16 @@ bot.command("help", mongoGuarded(async (ctx) => {
   if (admin || superadmin) roleTags.push(M.roleTagAdmin);
   const name = visitor?.name ?? asLeader[0]?.name ?? asResponsible[0]?.name ?? admin?.name;
   const infoLine = M.helpYourInfo({ name, team: visitor?.team, room: visitor?.room, roleTags });
+  // Admin/superadmin command lists are appended here and nowhere else: admins have no
+  // reply keyboard, and the scoped command menu only holds the zero-arg commands, so
+  // /help is where the arg-taking ones (/broadcast, /fixcheckin, /addleader, …) live.
+  const capabilities = roleCapabilitiesText({
+    ...roles,
+    isAdmin: !!admin || superadmin,
+    isSuperAdmin: superadmin,
+  });
   return ctx.reply(
-    [infoLine, roleCapabilitiesText(roles), M.infoChannel].filter(Boolean).join("\n\n"),
+    [infoLine, capabilities, M.infoChannel].filter(Boolean).join("\n\n"),
     kb ? { reply_markup: kb } : {},
   );
 }));
