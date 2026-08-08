@@ -1,6 +1,6 @@
 # Two-Way Communication (Help Desk + Team Chat Hint) — Design Spec
 
-**Date:** 2026-08-08
+**Date:** 2026-08-08 (updated same day: camp 2026 has ended — this targets the next camp)
 **Status:** Approved design.
 
 ## Problem
@@ -20,7 +20,7 @@ text they type falls through to name search. The two concrete pains:
 | Scope | General help desk: one entry point, routed by category (leader / doctor / admins) |
 | Team groups | Stay leader-created, real Telegram groups. The bot does **not** join them — it only hints leaders to create one and distribute the invite link via the existing «📢 Сповістити команду». The `/teamchat` bind-the-bot machinery is explicitly deferred (v2 if the gap hurts) |
 | Reply path | Depends on role: leaders answer kids by normal Telegram DM (forward carries a `tg://` link); doctor and admins reply **through the bot**, keeping their accounts private |
-| Doctor identity | New `DOCTOR_IDS` env var (mirrors `ADMIN_IDS`). First feature to hang off it; others (e.g. med-exam scan gating) may follow later |
+| Doctor identity | New `Doctors` sheet tab (`Telegram ID \| Name`, mirrors `Admins`) — the doctors are known people, and the list is data, not config. Managed from the web admin panel's roles page once it ships (see the 2026-08-07 spec); until then edited like the other role tabs. No `DOCTOR_IDS` env var |
 | Tracking | Every request is a Mongo doc with an open/closed flag and a «✅ Опрацьовано» button; `/stats` shows open counts. No full ticket lifecycle |
 | Hosting / state | Stays on Vercel serverless. Pending conversation state lives in Mongo (not memory), so the same code runs unchanged if the bot ever moves to a long-polling server — the hosting decision stays reversible |
 
@@ -61,7 +61,7 @@ again. Every step is re-entrant.
   visitor's team ID, as in the roster views) with name, age, room and a
   `tg://user?id=` profile link. Leaders answer by normal DM — no reply machinery. A team
   with no linked leader falls back to admins, so no request lands nowhere.
-- **Лікарю** — sent to everyone in `DOCTOR_IDS`.
+- **Лікарю** — sent to everyone in the `Doctors` sheet tab.
 - **Організаторам** — sent to all admins (`ADMIN_IDS` + `Admins` sheet).
 
 Doctor/admin copies carry two inline buttons:
@@ -113,9 +113,8 @@ the ObjectId hex (24 chars — fits the 64-byte limit).
   normal text path (name search / ignored) — never a crash, never a mis-routed request.
 - «✉️ Відповісти» on an already-closed request still works (a late answer is better than
   a swallowed one); the staff member sees the closed status in the confirmation.
-- A `DOCTOR_IDS` recipient who has never opened the bot can't be messaged
-  (`sendMessage` 403) — send errors per recipient are caught and skipped, same as
-  `/broadcast`.
+- A doctor who has never opened the bot can't be messaged (`sendMessage` 403) — send
+  errors per recipient are caught and skipped, same as `/broadcast`.
 
 ## Testing
 
@@ -124,7 +123,8 @@ Manual script on the dev bot (test token + scratch Mongo, per `scripts/dev.ts`):
 1. Check in a test kid; verify «🙋 Допомога» appears on the keyboard.
 2. One request per category; verify routing, the leader-forward's `tg://` link, and the
    no-leader → admins fallback.
-3. Doctor reply relay end-to-end, including a second «✉️ Відповісти» tap.
+3. Doctor reply relay end-to-end (doctor account taken from the scratch `Doctors` tab),
+   including a second «✉️ Відповісти» tap.
 4. «✅ Опрацьовано» twice from two accounts — second gets the who-closed-it toast.
 5. Abandoned tap: pick a category, wait >10 min, send text — must fall through to the
    normal path, not become a request.

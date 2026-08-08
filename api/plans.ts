@@ -26,8 +26,6 @@ const PAGE = `<!doctype html>
     --line: #E3E8E0;
     --pine: #2E6B4F;
     --pine-soft: #EAF3EE;
-    --amber: #B87A1E;
-    --amber-soft: #FBF3E4;
     --chip-ink: #24503C;
   }
   @media (prefers-color-scheme: dark) {
@@ -39,8 +37,6 @@ const PAGE = `<!doctype html>
       --line: #2C352F;
       --pine: #6FBF95;
       --pine-soft: #21332A;
-      --amber: #E0AC55;
-      --amber-soft: #33290F;
       --chip-ink: #A9D8BF;
     }
   }
@@ -151,38 +147,6 @@ const PAGE = `<!doctype html>
   .persona b { display: block; font-size: 14.5px; margin-bottom: 4px; }
   .persona p { font-size: 14.5px; color: var(--muted); margin: 0; }
 
-  .confirm {
-    background: var(--amber-soft);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 26px clamp(20px, 4vw, 32px) 28px;
-    margin-top: 28px;
-  }
-  .confirm .step-label { color: var(--amber); }
-  .confirm ol { margin: 0; padding-left: 0; list-style: none; counter-reset: q; }
-  .confirm ol li {
-    counter-increment: q;
-    display: flex;
-    gap: 12px;
-    margin-bottom: 14px;
-    font-size: 15.5px;
-  }
-  .confirm ol li::before {
-    content: counter(q);
-    flex: 0 0 auto;
-    width: 26px;
-    height: 26px;
-    border-radius: 999px;
-    background: var(--amber);
-    color: var(--bg);
-    font-size: 13.5px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: 1px;
-  }
-
   footer {
     max-width: 680px;
     margin: 36px auto 0;
@@ -195,19 +159,17 @@ const PAGE = `<!doctype html>
 <main>
   <p class="eyebrow">Discovery Camp · Telegram-бот табору</p>
   <h1>Два кроки розвитку бота</h1>
-  <p class="lede">Сьогодні бот уміє надсилати повідомлення лише «згори вниз» — від
-  організаторів до дітей. Нижче — дві пропозиції, які ми хочемо погодити з керівництвом,
-  перш ніж братися за роботу. Сторінка написана без технічних деталей; на кожен пункт
-  достатньо відповіді «так / ні / змінити».</p>
+  <p class="lede">Цього року бот умів надсилати повідомлення лише «згори вниз» — від
+  організаторів до дітей. До наступного табору плануємо два кроки, описані нижче.
+  Сторінка написана без технічних деталей.</p>
   <div class="meta">
-    <span>8 серпня 2026</span>
-    <span>Дизайн готовий, робота не почата</span>
+    <span>Серпень 2026</span>
+    <span>Плани на наступний табір</span>
   </div>
 
   <section>
     <p class="step-label">Крок 1</p>
     <h2>«🙋 Допомога» — зворотний зв'язок у боті</h2>
-    <p class="when">Під час табору · орієнтовно 1–2 робочих дні</p>
 
     <h3>Яку проблему вирішуємо</h3>
     <p>Дитина ніяк не може звернутися до дорослих через бот. Якщо лідер створив групу
@@ -256,7 +218,6 @@ const PAGE = `<!doctype html>
   <section>
     <p class="step-label">Крок 2</p>
     <h2>Веб-сторінка адміністратора</h2>
-    <p class="when">Після завершення табору · орієнтовно 2–3 тижні часткової зайнятості</p>
 
     <h3>Яку проблему вирішуємо</h3>
     <p>Зараз усе адміністрування — це Google-таблиці та команди в боті. Це працює, але
@@ -270,7 +231,7 @@ const PAGE = `<!doctype html>
       <li><strong>Статистика наживо</strong> — скільки заїхало, хто без медогляду чи
       оплати, реєстрації на майстер-класи.</li>
       <li><strong>Керування людьми</strong> — додати чи прибрати адміністратора, лідера,
-      відповідального за майстер-клас; виправити помилковий заїзд.</li>
+      лікаря, відповідального за майстер-клас; виправити помилковий заїзд.</li>
       <li><strong>Розсилки</strong> — написати оголошення всім з попереднім переглядом
       перед відправкою.</li>
       <li><strong>Майстер-класи</strong> — розклад, теми та кількість місць редагуються
@@ -284,20 +245,6 @@ const PAGE = `<!doctype html>
       <li>Бот для дітей і лідерів працює без змін.</li>
     </ul>
   </section>
-
-  <div class="confirm">
-    <p class="step-label">Що потрібно підтвердити</p>
-    <ol>
-      <li>Крок 1 «Допомога»: робимо у такому вигляді? Дитина зможе написати лідеру,
-      лікарю або організаторам через бот.</li>
-      <li>Хто отримуватиме звернення «до лікаря» — назвіть людину або людей.</li>
-      <li>Чи згодні, що лікар та організатори відповідають через бот (анонімно для
-      дитини), а лідери — особистим повідомленням.</li>
-      <li>Крок 2 (веб-сторінка адміністратора): будуємо після табору?</li>
-    </ol>
-    <p class="quiet" style="margin:0">Зауваження і правки можна передати Сергію у
-    будь-якій формі — усно чи повідомленням.</p>
-  </div>
 
   <footer>Технічні деталі обох рішень описані в проєктній документації репозиторію
   (docs/superpowers/specs). Ця сторінка — короткий виклад для погодження.</footer>
