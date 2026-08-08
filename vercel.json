@@ -11,5 +11,8 @@
   },
   "crons": [
     { "path": "/api/cron/mc-reminder?before=14:00", "schedule": "0 10 * * *" }
+  ],
+  "rewrites": [
+    { "source": "/plans", "destination": "/api/plans" }
   ]
 }
