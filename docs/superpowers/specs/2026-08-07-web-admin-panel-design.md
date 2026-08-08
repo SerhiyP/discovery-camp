@@ -80,7 +80,9 @@ Deployment notes:
 
 1. **Dashboard** — visitors / checked-in / missing-doctor / missing-payment counts, MC
    registrations per date and slot with capacity bars, both phishing channels (deduped
-   Telegram catches, raw QR scan count). Charts where they help.
+   Telegram catches, raw QR scan count), and open help-desk requests per category from
+   `helpRequests` (see the 2026-08-08 communication help-desk spec). Charts where they
+   help.
 2. **Visitors** — searchable table over the Mongo mirror (`getVisitorsMongo`): check-in
    state, doctor, payment, team, room. Per-row **release check-in** button (web
    equivalent of `/fixcheckin`, calling `releaseCheckInMongo`; `doctorStatus` is kept,
@@ -88,7 +90,9 @@ Deployment notes:
 3. **Roles** — add/remove admins, leaders, responsible people via forms and button
    pickers (same UX principle as `/delresp`: pick from a list, confirm, never type an
    exact name). Writes go to the same sheet tabs the bot commands write today, so the
-   bot's role checks keep working unchanged.
+   bot's role checks keep working unchanged. The doctor role (`DOCTOR_IDS` env var,
+   introduced by the 2026-08-08 communication help-desk spec) is env-var-only and stays
+   out of this page for now; moving it to a managed list is a possible follow-up.
 4. **MC management** — create/edit/delete catalog entries (title, responsible, place,
    gifts, capacity), assign MC IDs to date+slot schedule rows, edit per-day topics —
    all **writing directly to Mongo** (`masterclasses`, `mcSchedule`, `mcTopics`).
