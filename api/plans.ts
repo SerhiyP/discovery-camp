@@ -147,6 +147,28 @@ const PAGE = `<!doctype html>
   .persona b { display: block; font-size: 14.5px; margin-bottom: 4px; }
   .persona p { font-size: 14.5px; color: var(--muted); margin: 0; }
 
+  .feedback {
+    background: var(--pine-soft);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px clamp(20px, 4vw, 32px);
+    margin-top: 28px;
+    text-align: center;
+  }
+  .feedback p { margin: 0 0 16px; }
+  .button {
+    display: inline-block;
+    background: var(--pine);
+    color: var(--bg);
+    font-size: 15px;
+    font-weight: 650;
+    text-decoration: none;
+    border-radius: 10px;
+    padding: 11px 26px;
+  }
+  .button:hover { opacity: 0.9; }
+  .button:focus-visible { outline: 3px solid var(--chip-ink); outline-offset: 2px; }
+
   footer {
     max-width: 680px;
     margin: 36px auto 0;
@@ -245,6 +267,12 @@ const PAGE = `<!doctype html>
       <li>Бот для дітей і лідерів працює без змін.</li>
     </ul>
   </section>
+
+  <div class="feedback">
+    <p><strong>Є зауваження чи ідеї?</strong> Залиште відгук або пропозицію — кілька
+    хвилин, і вони точно не загубляться.</p>
+    <a class="button" href="https://forms.gle/LJzrxUifEx3MBq4Y9" target="_blank" rel="noopener">Залишити відгук</a>
+  </div>
 
   <footer>Технічні деталі обох рішень описані в проєктній документації репозиторію
   (docs/superpowers/specs). Ця сторінка — короткий виклад для погодження.</footer>
