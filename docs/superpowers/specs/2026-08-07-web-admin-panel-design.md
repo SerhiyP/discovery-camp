@@ -91,9 +91,11 @@ Deployment notes:
 3. **Roles** — add/remove admins, leaders, responsible people via forms and button
    pickers (same UX principle as `/delresp`: pick from a list, confirm, never type an
    exact name). Writes go to the same sheet tabs the bot commands write today, so the
-   bot's role checks keep working unchanged. This page also manages the doctor list
-   (the `Doctors` sheet tab introduced by the 2026-08-08 communication help-desk spec),
-   same add/remove UX as the other roles.
+   bot's role checks keep working unchanged. This page also manages the doctor list —
+   the `doctors` Mongo collection introduced by the 2026-08-08 communication help-desk
+   spec — with the same add/remove UX as the other roles; being a new role with no
+   sheet legacy, it writes Mongo directly (the direction all role storage should
+   eventually move).
 4. **MC management** — create/edit/delete catalog entries (title, responsible, place,
    gifts, capacity), assign MC IDs to date+slot schedule rows, edit per-day topics —
    all **writing directly to Mongo** (`masterclasses`, `mcSchedule`, `mcTopics`).
